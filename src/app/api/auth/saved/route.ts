@@ -6,6 +6,7 @@ export async function PUT(request: Request) {
   await connection()
   const user = await currentUser()
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
+  if (!user.vip) return Response.json({ error: "收藏仅 VIP 可用" }, { status: 403 })
   let body: unknown
   try {
     body = await request.json()

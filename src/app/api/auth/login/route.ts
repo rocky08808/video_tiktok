@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "用户名或密码不对" }, { status: 401 })
     }
     await openSession(username)
-    return Response.json({ username }, { headers: { "Cache-Control": "no-store" } })
+    return Response.json({ username, vip: user?.vip === true }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     return Response.json({ error: describeMongoError(error) }, { status: 503 })
   }

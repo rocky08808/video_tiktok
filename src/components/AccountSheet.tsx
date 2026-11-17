@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react"
 
-type User = { username: string }
+type User = { username: string; vip: boolean }
 
 export function AccountSheet({
   open,
@@ -10,12 +10,14 @@ export function AccountSheet({
   savedCount,
   onClose,
   onUser,
+  onOpenVip,
 }: {
   open: boolean
   user: User | null
   savedCount: number
   onClose: () => void
   onUser: (user: User | null) => void
+  onOpenVip: () => void
 }) {
   const [mode, setMode] = useState<"login" | "register">("login")
   const [username, setUsername] = useState("")
@@ -34,13 +36,13 @@ export function AccountSheet({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
       })
-      const data = (await response.json()) as { username?: string; error?: string }
+      const data = (await response.json()) as { username?: string; vip?: boolean; error?: string }
       if (!response.ok || !data.username) {
         setError(data.error || "登录失败")
         return
       }
       setPassword("")
-      onUser({ username: data.username })
+      onUser({ username: data.username, vip: data.vip === true })
     } catch {
       setError("网络不好，稍后再试")
     } finally {
@@ -111,8 +113,24 @@ export function AccountSheet({
             <span className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-2xl font-semibold text-white">
               {Array.from(user.username)[0]}
             </span>
-            <p className="mt-3 text-lg font-semibold">{user.username}</p>
-            <p className="mt-1 text-sm text-white/55">收藏了 {savedCount} 条</p>
+            <p className="mt-3 flex items-center gap-2 text-lg font-semibold">
+              {user.username}
+              {user.vip && (
+                <span className="rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-2 py-0.5 text-[11px] font-semibold leading-none text-white">
+                  VIP
+                </span>
+              )}
+            </p>
+            <p className="mt-1 text-sm text-white/55">{user.vip ? `收藏了 ${savedCount} 条` : "开通 VIP 后可以收藏"}</p>
+            {!user.vip && (
+              <button
+                type="button"
+                className="mt-4 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"
+                onClick={onOpenVip}
+              >
+                开通 VIP
+              </button>
+            )}
             {error && <p className="mt-3 text-sm text-[var(--dy)]">{error}</p>}
             <button
               type="button"

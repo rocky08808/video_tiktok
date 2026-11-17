@@ -1,7 +1,9 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto"
 import { promisify } from "node:util"
 import { cookies } from "next/headers"
-import { getSessionsCollection, getUsersCollection, getVideoCollection } from "@/lib/mongo"
+import { getSessionsCollection, getUsersCollection, getVideoCollection, getVipOrdersCollection } from "@/lib/mongo"
+import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
+import { VIP_NETWORK, VIP_ORDER_TTL_MS, VIP_PRICE_USDT, vipUsdtAddress } from "@/lib/vip"
 
 const scryptAsync = promisify(scrypt)
 const COOKIE = "sk_session"
@@ -102,7 +104,155 @@ export async function currentUser() {
   if (typeof session?.username !== "string") return null
   const users = await getUsersCollection()
   const doc = await users.findOne({ usernameKey: session.username.toLocaleLowerCase() })
-  return { username: session.username, savedIds: readSavedIds(doc?.savedIds), likedIds: readSavedIds(doc?.likedIds) }
+  return {
+    username: session.username,
+    vip: doc?.vip === true,
+    savedIds: readSavedIds(doc?.savedIds),
+    likedIds: readSavedIds(doc?.likedIds),
+  }
+}
+
+export async function openVip(username: string) {
+  await ensureAuthCollections()
+  const users = await getUsersCollection()
+  await users.updateOne(
+    { usernameKey: username.toLocaleLowerCase() },
+    { $set: { vip: true, vipAt: new Date() } },
+  )
+  return true
+}
+
+async function nextVipAmount() {
+  const orders = await getVipOrdersCollection()
+  const since = new Date(Date.now() - VIP_ORDER_TTL_MS)
+  const pending = await orders
+    .find({ status: "pending", createdAt: { $gt: since } }, { projection: { amount: 1 } })
+    .toArray()
+  const used = new Set(
+    pending.map((item) => Math.round((Number(item.amount) - VIP_PRICE_USDT) * 100)).filter((n) => Number.isFinite(n)),
+  )
+  for (let cent = 0; cent <= 99; cent += 1) {
+    if (!used.has(cent)) return Math.round((VIP_PRICE_USDT + cent / 100) * 100) / 100
+  }
+  return Math.round((VIP_PRICE_USDT + (Date.now() % 100) / 100) * 100) / 100
+}
+
+export async function ensurePendingVipOrder(username: string) {
+  await ensureAuthCollections()
+  const address = vipUsdtAddress()
+  if (!address) throw new Error("缺少收款地址")
+  const orders = await getVipOrdersCollection()
+  await orders.createIndex({ txId: 1 }, { unique: true, sparse: true })
+  await orders.createIndex({ username: 1, status: 1, createdAt: -1 })
+
+  const existing = await orders.findOne({
+    username,
+    status: "pending",
+    createdAt: { $gt: new Date(Date.now() - VIP_ORDER_TTL_MS) },
+  })
+  if (existing && typeof existing.amount === "number") {
+    return {
+      orderId: String(existing._id),
+      amount: existing.amount,
+      address,
+      network: VIP_NETWORK,
+      currency: "USDT" as const,
+    }
+  }
+
+  const amount = await nextVipAmount()
+  const result = await orders.insertOne({
+    username,
+    amount,
+    currency: "USDT",
+    network: VIP_NETWORK,
+    address,
+    status: "pending",
+    createdAt: new Date(),
+  })
+  return {
+    orderId: String(result.insertedId),
+    amount,
+    address,
+    network: VIP_NETWORK,
+    currency: "USDT" as const,
+  }
+}
+
+export async function confirmVipPayment(username: string) {
+  await ensureAuthCollections()
+  const address = vipUsdtAddress()
+  if (!address) return { ok: false as const, error: "还没配置收款地址" }
+
+  const orders = await getVipOrdersCollection()
+  const order = await orders.findOne({
+    username,
+    status: "pending",
+    createdAt: { $gt: new Date(Date.now() - VIP_ORDER_TTL_MS) },
+  })
+  if (!order || typeof order.amount !== "number") {
+    return { ok: false as const, error: "请先打开充值页生成订单" }
+  }
+
+  const createdAt = order.createdAt instanceof Date ? order.createdAt.getTime() : Date.now()
+  const minAt = createdAt - 3 * 60 * 1000
+  let transfers
+  try {
+    transfers = await listUsdtTransfersToVip(50)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ""
+    return { ok: false as const, error: message || "查链失败，稍后再试" }
+  }
+
+  const candidates = transfers.filter(
+    (item) => item.to === address && sameUsdtAmount(item.amount, order.amount) && item.at >= minAt,
+  )
+  const used = await orders
+    .find(
+      { txId: { $in: candidates.map((item) => item.txId) }, status: "paid" },
+      { projection: { txId: 1, username: 1 } },
+    )
+    .toArray()
+  const usedBy = new Map(
+    used
+      .filter((item) => typeof item.txId === "string")
+      .map((item) => [item.txId as string, typeof item.username === "string" ? item.username : ""]),
+  )
+  const matched = candidates.find((item) => {
+    const owner = usedBy.get(item.txId)
+    return !owner || owner === username
+  })
+  if (!matched) {
+    return {
+      ok: false as const,
+      error: `还没检测到 ${order.amount} USDT 到账，链上通常要几秒到一分钟，请稍后再点`,
+      amount: order.amount,
+    }
+  }
+
+  const updated = await orders.findOneAndUpdate(
+    { _id: order._id, status: "pending" },
+    {
+      $set: {
+        status: "paid",
+        txId: matched.txId,
+        from: matched.from,
+        paidAt: new Date(),
+      },
+    },
+    { returnDocument: "after" },
+  )
+  if (!updated) {
+    const again = await orders.findOne({ username, status: "paid", txId: matched.txId })
+    if (again) {
+      await openVip(username)
+      return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId }
+    }
+    return { ok: false as const, error: "订单已失效，请刷新页面" }
+  }
+
+  await openVip(username)
+  return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId, orderId: String(order._id) }
 }
 
 type IdField = "likedIds" | "savedIds"

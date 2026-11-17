@@ -41,6 +41,11 @@ export async function getSessionsCollection(): Promise<Collection<Document>> {
   return database.collection("sessions")
 }
 
+export async function getVipOrdersCollection(): Promise<Collection<Document>> {
+  const database = await getDb()
+  return database.collection("vip_orders")
+}
+
 export function describeMongoError(error: unknown) {
   const message = error instanceof Error ? error.message : ""
   if (/Authentication failed|auth failed|bad auth/i.test(message)) {

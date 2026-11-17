@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { AccountSheet } from "@/components/AccountSheet"
 import { IconFullscreen, IconVolume } from "@/components/icons"
@@ -99,6 +100,7 @@ function sameIds(left: string[], right: string[]) {
 }
 
 export function Feed() {
+  const router = useRouter()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(0)
@@ -118,16 +120,19 @@ export function Feed() {
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [likedIds, setLikedIds] = useState<string[]>([])
   const [profileOpen, setProfileOpen] = useState(false)
-  const [user, setUser] = useState<{ username: string } | null>(null)
+  const [user, setUser] = useState<{ username: string; vip: boolean } | null>(null)
+  const [vipOpen, setVipOpen] = useState(false)
   const [authReady, setAuthReady] = useState(false)
   const profileRef = useRef(false)
+  const vipRef = useRef(false)
   const countFixes = useRef<{ likes: Record<string, number>; bookmarks: Record<string, number> }>({
     likes: {},
     bookmarks: {},
   })
   const savedSeq = useRef(0)
   const likedSeq = useRef(0)
-  profileRef.current = profileOpen
+  profileRef.current = profileOpen || vipOpen
+  vipRef.current = vipOpen
 
   const pausedRef = useRef(paused)
   const mutedRef = useRef(muted)
@@ -137,8 +142,9 @@ export function Feed() {
     if (tab === "forYou") forYouIndex.current = active
     pausedRef.current = paused
     mutedRef.current = muted
-    profileRef.current = profileOpen
-  }, [active, paused, muted, profileOpen, tab])
+    profileRef.current = profileOpen || vipOpen
+    vipRef.current = vipOpen
+  }, [active, paused, muted, profileOpen, vipOpen, tab])
 
   const list = useMemo(() => {
     if (tab !== "saved") return videos
@@ -174,7 +180,7 @@ export function Feed() {
     if (localLiked.length > 0) setLikedIds(localLiked)
     const controller = new AbortController()
     fetch("/api/auth/me", { signal: controller.signal })
-      .then((response) => response.json() as Promise<{ username?: string | null; savedIds?: string[]; likedIds?: string[] }>)
+      .then((response) => response.json() as Promise<{ username?: string | null; vip?: boolean; savedIds?: string[]; likedIds?: string[] }>)
       .then((data) => {
         const latestLocal = readLocalSaved()
         const latestLiked = readLocalLiked()
@@ -186,12 +192,12 @@ export function Feed() {
           return
         }
         setAuthReady(true)
-        setUser({ username: data.username })
+        setUser({ username: data.username, vip: data.vip === true })
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
         setSavedIds((current) => {
           const merged = mergeIds(remote, mergeIds(latestLocal, current))
-          if (!sameIds(merged, remote)) {
+          if (data.vip === true && !sameIds(merged, remote)) {
             void pushIds("saved", merged).then((counts) => {
               rememberCounts(countFixes.current, "bookmarks", counts)
               paintCounts(setVideos, "bookmarks", counts)
@@ -306,7 +312,8 @@ export function Feed() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && profileRef.current) {
-        setProfileOpen(false)
+        if (vipRef.current) setVipOpen(false)
+        else setProfileOpen(false)
         return
       }
       const tag = (event.target as HTMLElement | null)?.tagName
@@ -365,8 +372,8 @@ export function Feed() {
   useEffect(() => {
     const root = scrollerRef.current
     if (!root) return
-    root.style.overflowY = profileOpen ? "hidden" : "auto"
-  }, [profileOpen])
+    root.style.overflowY = profileOpen || vipOpen ? "hidden" : "auto"
+  }, [profileOpen, vipOpen])
 
   useLayoutEffect(() => {
     if (!toast) return
@@ -425,6 +432,10 @@ function activeVideo() {
       setProfileOpen(true)
       return
     }
+    if (authReady && user && !user.vip) {
+      setVipOpen(true)
+      return
+    }
     const adding = !savedIds.includes(id)
     const next = adding ? [id, ...savedIds.filter((item) => item !== id)] : savedIds.filter((item) => item !== id)
     const seq = ++savedSeq.current
@@ -462,20 +473,24 @@ function activeVideo() {
     })
   }
 
-  function onAccount(next: { username: string } | null) {
+  function onAccount(next: { username: string; vip: boolean } | null) {
     setUser(next)
     if (!next) return
     void fetch("/api/auth/me")
-      .then((response) => response.json() as Promise<{ savedIds?: string[]; likedIds?: string[] }>)
+      .then((response) => response.json() as Promise<{ vip?: boolean; savedIds?: string[]; likedIds?: string[] }>)
       .then((data) => {
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
+        const vip = data.vip === true
+        setUser((current) => (current ? { ...current, vip } : current))
         setSavedIds((current) => {
           const merged = mergeIds(remote, current)
-          void pushIds("saved", merged).then((counts) => {
-            rememberCounts(countFixes.current, "bookmarks", counts)
-            paintCounts(setVideos, "bookmarks", counts)
-          })
+          if (vip) {
+            void pushIds("saved", merged).then((counts) => {
+              rememberCounts(countFixes.current, "bookmarks", counts)
+              paintCounts(setVideos, "bookmarks", counts)
+            })
+          } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
           return merged
         })
         setLikedIds((current) => {
@@ -488,6 +503,12 @@ function activeVideo() {
         })
       })
       .catch(() => {})
+  }
+
+  function goVip() {
+    setVipOpen(false)
+    setProfileOpen(false)
+    router.push("/vip")
   }
 
   function selectTab(next: Tab) {
@@ -561,6 +582,19 @@ function activeVideo() {
               <div>
                 <p className="text-lg font-medium">没有播出来</p>
                 <p className="mt-2 text-sm leading-6 text-white/60">{error}</p>
+              </div>
+            </div>
+          ) : tab === "saved" && authReady && !user?.vip ? (
+            <div className="feed-slide grid place-items-center px-8 text-center">
+              <div>
+                <p className="text-lg font-medium">收藏只对 VIP 开放</p>
+                <button
+                  type="button"
+                  className="mt-4 rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-4 py-1.5 text-sm font-semibold text-white"
+                  onClick={() => (user ? goVip() : setProfileOpen(true))}
+                >
+                  {user ? "开通 VIP" : "去登录"}
+                </button>
               </div>
             </div>
           ) : list.length === 0 ? (
@@ -670,7 +704,32 @@ function activeVideo() {
           savedCount={savedIds.length}
           onClose={() => setProfileOpen(false)}
           onUser={onAccount}
+          onOpenVip={goVip}
         />
+        <div inert={!vipOpen} className={`absolute inset-0 z-40 ${vipOpen ? "" : "pointer-events-none"}`}>
+          <button
+            type="button"
+            aria-label="关闭 VIP"
+            className={`absolute inset-0 bg-black/45 transition-opacity ${vipOpen ? "opacity-100" : "opacity-0"}`}
+            onClick={() => setVipOpen(false)}
+          />
+          <section
+            className={`absolute inset-x-0 bottom-0 rounded-t-2xl bg-[#161018] px-5 pt-4 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
+              vipOpen ? "translate-y-0" : "translate-y-full"
+            }`}
+            aria-hidden={!vipOpen}
+          >
+            <h2 className="text-center text-base font-semibold">开通 VIP</h2>
+            <p className="mt-2 text-center text-sm text-white/60">收藏只对 VIP 开放，开通需充值 USDT</p>
+            <button
+              type="button"
+              className="mt-5 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"
+              onClick={goVip}
+            >
+              开通 VIP
+            </button>
+          </section>
+        </div>
       </div>
     </div>
   )

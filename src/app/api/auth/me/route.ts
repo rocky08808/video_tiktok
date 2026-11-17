@@ -7,7 +7,12 @@ export async function GET() {
   try {
     const user = await currentUser()
     return Response.json(
-      { username: user?.username ?? null, savedIds: user?.savedIds ?? [], likedIds: user?.likedIds ?? [] },
+      {
+        username: user?.username ?? null,
+        vip: user?.vip ?? false,
+        savedIds: user?.savedIds ?? [],
+        likedIds: user?.likedIds ?? [],
+      },
       { headers: { "Cache-Control": "no-store" } },
     )
   } catch (error) {

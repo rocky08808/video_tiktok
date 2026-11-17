@@ -28,10 +28,11 @@ export async function POST(request: Request) {
       usernameKey: credentials.usernameKey,
       passwordHash,
       salt,
+      vip: false,
       createdAt: new Date(),
     })
     await openSession(credentials.username)
-    return Response.json({ username: credentials.username }, { headers: { "Cache-Control": "no-store" } })
+    return Response.json({ username: credentials.username, vip: false }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     if (isDuplicateUser(error)) {
       return Response.json({ error: "这个用户名已经有人用了" }, { status: 409 })
