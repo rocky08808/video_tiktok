@@ -1,8 +1,34 @@
 "use client"
 
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
+import { VIP_FREE_DAILY, VIP_INVITE_NEED, VIP_PIC_FREE } from "@/lib/vip"
 
-type User = { username: string; vip: boolean }
+type User = {
+  username: string
+  vip: boolean
+  inviteCode?: string | null
+  inviteCount?: number
+  inviteVipCount?: number
+  inviteNeed?: number
+}
+
+const INVITE_KEY = "sk_invite"
+
+export function readStoredInvite() {
+  try {
+    return localStorage.getItem(INVITE_KEY)?.trim() || ""
+  } catch {
+    return ""
+  }
+}
+
+export function storeInviteCode(code: string) {
+  try {
+    localStorage.setItem(INVITE_KEY, code.trim())
+  } catch {
+    // ignore
+  }
+}
 
 export function AccountSheet({
   open,
@@ -24,6 +50,13 @@ export function AccountSheet({
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [inviteHint, setInviteHint] = useState("")
+
+  useEffect(() => {
+    if (!open) return
+    setInviteHint(readStoredInvite())
+  }, [open])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -31,18 +64,33 @@ export function AccountSheet({
     setPending(true)
     setError(null)
     try {
+      const inviteCode = mode === "register" ? readStoredInvite() : ""
       const response = await fetch(mode === "login" ? "/api/auth/login" : "/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(
+          mode === "register" && inviteCode ? { username, password, inviteCode } : { username, password },
+        ),
       })
-      const data = (await response.json()) as { username?: string; vip?: boolean; error?: string }
+      const data = (await response.json()) as {
+        username?: string
+        vip?: boolean
+        inviteCode?: string
+        error?: string
+      }
       if (!response.ok || !data.username) {
         setError(data.error || "登录失败")
         return
       }
       setPassword("")
-      onUser({ username: data.username, vip: data.vip === true })
+      onUser({
+        username: data.username,
+        vip: data.vip === true,
+        inviteCode: data.inviteCode ?? null,
+        inviteCount: 0,
+        inviteVipCount: 0,
+        inviteNeed: VIP_INVITE_NEED,
+      })
     } catch {
       setError("网络不好，稍后再试")
     } finally {
@@ -71,6 +119,23 @@ export function AccountSheet({
     }
   }
 
+  async function copyInvite() {
+    if (!user?.inviteCode) return
+    const link = `${window.location.origin}/?invite=${user.inviteCode}`
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setError("复制失败，请手动复制")
+    }
+  }
+
+  const inviteNeed = user?.inviteNeed ?? VIP_INVITE_NEED
+  const inviteCount = user?.inviteCount ?? 0
+  const inviteVipCount = user?.inviteVipCount ?? 0
+  const inviteProgress = Math.min(1, inviteNeed > 0 ? inviteVipCount / inviteNeed : 0)
+
   return (
     <div inert={!open} className={`absolute inset-0 z-40 ${open ? "" : "pointer-events-none"}`}>
       <button
@@ -80,27 +145,17 @@ export function AccountSheet({
         onClick={onClose}
       />
       <section
-        className={`absolute inset-x-0 bottom-0 rounded-t-2xl bg-[#161018] px-5 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
+        className={`absolute inset-x-0 bottom-0 max-h-[min(92dvh,720px)] overflow-y-auto rounded-t-[28px] bg-[#141018] px-5 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-y-0" : "translate-y-full"
         }`}
         aria-hidden={!open}
       >
-        <header className="relative grid place-items-center pb-4 pt-1">
+        <header className="relative grid place-items-center pb-5 pt-1">
           <span className="absolute top-0 h-1 w-10 rounded-full bg-white/20" />
-          {user && (
-            <button
-              type="button"
-              className="absolute left-0 top-2 h-8 px-1 text-sm text-white/80 disabled:opacity-60"
-              onClick={() => void logout()}
-              disabled={pending}
-            >
-              退出
-            </button>
-          )}
-          <h2 className="pt-3 text-sm font-medium">个人中心</h2>
+          <h2 className="pt-3 text-sm font-medium tracking-wide text-white/90">个人中心</h2>
           <button
             type="button"
-            className="absolute right-0 top-2 grid h-8 w-8 place-items-center text-white/70"
+            className="absolute right-0 top-2 grid h-8 w-8 place-items-center text-xl leading-none text-white/55"
             onClick={onClose}
             aria-label="关闭"
           >
@@ -109,36 +164,118 @@ export function AccountSheet({
         </header>
 
         {user ? (
-          <div className="flex flex-col items-center pb-2">
-            <span className="grid h-16 w-16 place-items-center rounded-full bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-2xl font-semibold text-white">
-              {Array.from(user.username)[0]}
-            </span>
-            <p className="mt-3 flex items-center gap-2 text-lg font-semibold">
-              {user.username}
-              {user.vip && (
-                <span className="rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-2 py-0.5 text-[11px] font-semibold leading-none text-white">
-                  VIP
-                </span>
+          <div className="flex flex-col pb-2">
+            <div className="flex items-center gap-3.5">
+              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-xl font-semibold text-white shadow-[0_0_24px_rgba(254,44,85,0.28)]">
+                {Array.from(user.username)[0]}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-2 truncate text-[17px] font-semibold">
+                  {user.username}
+                  {user.vip && (
+                    <span className="shrink-0 rounded-md bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-1.5 py-0.5 text-[10px] font-bold leading-none tracking-wide text-white">
+                      VIP
+                    </span>
+                  )}
+                </p>
+                <p className="mt-1 text-[13px] leading-snug text-white/45">
+                  {user.vip
+                    ? `已收藏 ${savedCount} 条视频`
+                    : `每天 ${VIP_FREE_DAILY} 条 · 美图 ${VIP_PIC_FREE} 张 · VIP 全开放`}
+                </p>
+              </div>
+            </div>
+
+            <div className="relative mt-5 overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.07] to-white/[0.03] p-4">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[radial-gradient(circle,rgba(37,244,238,0.18),transparent_70%)]"
+              />
+              <div className="relative flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[15px] font-semibold text-white">邀请好友</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-white/45">
+                    满 {inviteNeed} 位好友开通 VIP，你免费升级
+                  </p>
+                </div>
+                {inviteVipCount >= inviteNeed && (
+                  <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
+                    已达成
+                  </span>
+                )}
+              </div>
+
+              <div className="relative mt-4 grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-black/25 px-3 py-3">
+                  <p className="text-[11px] text-white/40">已邀请</p>
+                  <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
+                    {inviteCount}
+                    <span className="ml-1 text-[12px] font-medium text-white/35">人</span>
+                  </p>
+                </div>
+                <div className="rounded-xl bg-black/25 px-3 py-3">
+                  <p className="text-[11px] text-white/40">已成 VIP</p>
+                  <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
+                    {inviteVipCount}
+                    <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="relative mt-3.5">
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
+                    style={{ width: `${inviteProgress * 100}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-white/35">
+                  {inviteVipCount >= inviteNeed
+                    ? "邀请奖励已解锁"
+                    : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`}
+                </p>
+              </div>
+
+              {user.inviteCode && (
+                <div className="relative mt-4 flex items-center gap-2 rounded-xl bg-black/30 p-1.5 pl-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] tracking-wide text-white/35">邀请码</p>
+                    <p className="truncate font-mono text-[15px] font-semibold tracking-[0.12em] text-white">
+                      {user.inviteCode}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className={`h-10 shrink-0 rounded-lg px-3.5 text-[13px] font-semibold transition-colors ${
+                      copied
+                        ? "bg-[#25f4ee]/20 text-[#25f4ee]"
+                        : "bg-gradient-to-r from-[#fe2c55] to-[#25f4ee] text-white"
+                    }`}
+                    onClick={() => void copyInvite()}
+                  >
+                    {copied ? "已复制" : "复制链接"}
+                  </button>
+                </div>
               )}
-            </p>
-            <p className="mt-1 text-sm text-white/55">{user.vip ? `收藏了 ${savedCount} 条` : "开通 VIP 后可以收藏"}</p>
+            </div>
+
             {!user.vip && (
               <button
                 type="button"
-                className="mt-4 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"
+                className="mt-4 h-12 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
                 onClick={onOpenVip}
               >
                 开通 VIP
               </button>
             )}
-            {error && <p className="mt-3 text-sm text-[var(--dy)]">{error}</p>}
+            {error && <p className="mt-3 text-center text-sm text-[var(--dy)]">{error}</p>}
             <button
               type="button"
-              className="mt-5 h-11 w-full rounded-full border border-white/25 text-sm font-semibold text-white disabled:opacity-60"
+              className="mt-3 h-11 w-full text-sm text-white/40 transition-colors hover:text-white/70 disabled:opacity-60"
               onClick={() => void logout()}
               disabled={pending}
             >
-              {pending ? "退出中" : "退出"}
+              {pending ? "退出中…" : "退出登录"}
             </button>
           </div>
         ) : (
@@ -160,6 +297,9 @@ export function AccountSheet({
               placeholder="密码"
               className="h-11 rounded-full bg-white/10 px-4 text-sm outline-none placeholder:text-white/35"
             />
+            {mode === "register" && inviteHint && (
+              <p className="text-center text-xs text-white/45">将使用邀请码 {inviteHint}</p>
+            )}
             {error && <p className="text-sm text-[var(--dy)]">{error}</p>}
             <button
               type="submit"

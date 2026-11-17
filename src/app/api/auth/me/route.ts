@@ -10,6 +10,10 @@ export async function GET() {
       {
         username: user?.username ?? null,
         vip: user?.vip ?? false,
+        inviteCode: user?.inviteCode ?? null,
+        inviteCount: user?.inviteCount ?? 0,
+        inviteVipCount: user?.inviteVipCount ?? 0,
+        inviteNeed: user?.inviteNeed ?? 5,
         savedIds: user?.savedIds ?? [],
         likedIds: user?.likedIds ?? [],
       },

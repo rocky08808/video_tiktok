@@ -2,10 +2,13 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
-import { AccountSheet } from "@/components/AccountSheet"
+import { AccountSheet, storeInviteCode } from "@/components/AccountSheet"
 import { IconFullscreen, IconVolume } from "@/components/icons"
+import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
+import { VIP_FREE_DAILY } from "@/lib/vip"
+import { canWatchVideo, noteWatchedId, watchedCountToday } from "@/lib/watch-limit"
 
 type Tab = "forYou" | "saved"
 
@@ -120,19 +123,36 @@ export function Feed() {
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [likedIds, setLikedIds] = useState<string[]>([])
   const [profileOpen, setProfileOpen] = useState(false)
-  const [user, setUser] = useState<{ username: string; vip: boolean } | null>(null)
+  const [user, setUser] = useState<{
+    username: string
+    vip: boolean
+    inviteCode?: string | null
+    inviteCount?: number
+    inviteVipCount?: number
+    inviteNeed?: number
+  } | null>(null)
   const [vipOpen, setVipOpen] = useState(false)
+  const [picsOpen, setPicsOpen] = useState(false)
+  const [picThumb, setPicThumb] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
+  const [watchBlocked, setWatchBlocked] = useState(false)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
+  const picsRef = useRef(false)
+  const vipUserRef = useRef(false)
+  const listRef = useRef<VideoItem[]>([])
+  const tabRef = useRef<Tab>(tab)
   const countFixes = useRef<{ likes: Record<string, number>; bookmarks: Record<string, number> }>({
     likes: {},
     bookmarks: {},
   })
   const savedSeq = useRef(0)
   const likedSeq = useRef(0)
-  profileRef.current = profileOpen || vipOpen
+  profileRef.current = profileOpen || vipOpen || picsOpen
   vipRef.current = vipOpen
+  picsRef.current = picsOpen
+  vipUserRef.current = user?.vip === true
+  tabRef.current = tab
 
   const pausedRef = useRef(paused)
   const mutedRef = useRef(muted)
@@ -142,9 +162,28 @@ export function Feed() {
     if (tab === "forYou") forYouIndex.current = active
     pausedRef.current = paused
     mutedRef.current = muted
-    profileRef.current = profileOpen || vipOpen
+    profileRef.current = profileOpen || vipOpen || picsOpen
     vipRef.current = vipOpen
-  }, [active, paused, muted, profileOpen, vipOpen, tab])
+    picsRef.current = picsOpen
+    vipUserRef.current = user?.vip === true
+    tabRef.current = tab
+  }, [active, paused, muted, profileOpen, vipOpen, picsOpen, tab, user?.vip])
+
+  useEffect(() => {
+    if (picsOpen) setPaused(true)
+  }, [picsOpen])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch("/api/pics", { signal: controller.signal })
+      .then((response) => response.json() as Promise<{ pics?: { src?: string }[] }>)
+      .then((data) => {
+        const first = data.pics?.find((item) => typeof item.src === "string" && item.src)
+        if (first?.src) setPicThumb(first.src)
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [user?.vip])
 
   const list = useMemo(() => {
     if (tab !== "saved") return videos
@@ -154,6 +193,46 @@ export function Feed() {
       return video ? [video] : []
     })
   }, [tab, videos, savedIds])
+  listRef.current = list
+
+  function allowIndex(index: number) {
+    if (vipUserRef.current || tabRef.current !== "forYou") return true
+    const video = listRef.current[index]
+    if (!video) return false
+    return canWatchVideo(video.id, false)
+  }
+
+  useEffect(() => {
+    if (tab !== "forYou") {
+      setWatchBlocked(false)
+      return
+    }
+    if (user?.vip) {
+      setWatchBlocked(false)
+      return
+    }
+    const video = list[active]
+    if (!video) return
+    if (canWatchVideo(video.id, false)) {
+      noteWatchedId(video.id)
+      setWatchBlocked(false)
+      return
+    }
+    // 已达免费上限：只暂停/回退，不自动弹 VIP（登录改 user 也会跑到这里）
+    setWatchBlocked(true)
+    setPaused(true)
+    const root = scrollerRef.current
+    for (let index = active - 1; index >= 0; index -= 1) {
+      const previous = list[index]
+      if (!previous || !canWatchVideo(previous.id, false)) continue
+      activeRef.current = index
+      setActive(index)
+      if (root && root.clientHeight > 0) root.scrollTop = index * root.clientHeight
+      setWatchBlocked(false)
+      setPaused(false)
+      return
+    }
+  }, [active, list, tab, user?.vip])
   useEffect(() => {
     const controller = new AbortController()
     fetch("/api/videos", { signal: controller.signal })
@@ -174,13 +253,33 @@ export function Feed() {
   }, [])
 
   useEffect(() => {
+    try {
+      const code = new URLSearchParams(window.location.search).get("invite")
+      if (code) storeInviteCode(code)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
     const local = readLocalSaved()
     const localLiked = readLocalLiked()
     if (local.length > 0) setSavedIds(local)
     if (localLiked.length > 0) setLikedIds(localLiked)
     const controller = new AbortController()
     fetch("/api/auth/me", { signal: controller.signal })
-      .then((response) => response.json() as Promise<{ username?: string | null; vip?: boolean; savedIds?: string[]; likedIds?: string[] }>)
+      .then((response) =>
+        response.json() as Promise<{
+          username?: string | null
+          vip?: boolean
+          inviteCode?: string | null
+          inviteCount?: number
+          inviteVipCount?: number
+          inviteNeed?: number
+          savedIds?: string[]
+          likedIds?: string[]
+        }>,
+      )
       .then((data) => {
         const latestLocal = readLocalSaved()
         const latestLiked = readLocalLiked()
@@ -192,7 +291,14 @@ export function Feed() {
           return
         }
         setAuthReady(true)
-        setUser({ username: data.username, vip: data.vip === true })
+        setUser({
+          username: data.username,
+          vip: data.vip === true,
+          inviteCode: data.inviteCode ?? null,
+          inviteCount: data.inviteCount ?? 0,
+          inviteVipCount: data.inviteVipCount ?? 0,
+          inviteNeed: data.inviteNeed ?? 5,
+        })
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
         setSavedIds((current) => {
@@ -239,6 +345,12 @@ export function Feed() {
     const syncToScroll = () => {
       if (root.clientHeight === 0) return
       const index = Math.min(list.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
+      if (!allowIndex(index)) {
+        const fallback = Math.max(0, activeRef.current)
+        root.scrollTop = fallback * root.clientHeight
+        if (!profileRef.current) setVipOpen(true)
+        return
+      }
       if (index === activeRef.current) return
       activeRef.current = index
       pauseOtherVideos(root, index)
@@ -265,6 +377,11 @@ export function Feed() {
       locked = true
       const current = Math.round(root.scrollTop / root.clientHeight)
       const next = Math.min(list.length - 1, Math.max(0, current + (event.deltaY > 0 ? 1 : -1)))
+      if (event.deltaY > 0 && !allowIndex(next)) {
+        locked = false
+        if (!profileRef.current) setVipOpen(true)
+        return
+      }
       root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       window.setTimeout(() => {
         locked = false
@@ -273,6 +390,12 @@ export function Feed() {
     const onScroll = () => {
       if (root.clientHeight === 0 || list.length === 0) return
       const index = Math.min(list.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
+      if (!allowIndex(index)) {
+        const fallback = Math.max(0, activeRef.current)
+        if (root.clientHeight > 0) root.scrollTop = fallback * root.clientHeight
+        if (!profileRef.current) setVipOpen(true)
+        return
+      }
       pauseOtherVideos(root, index)
       if (index === activeRef.current) return
       activeRef.current = index
@@ -313,6 +436,7 @@ export function Feed() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && profileRef.current) {
         if (vipRef.current) setVipOpen(false)
+        else if (picsRef.current) setPicsOpen(false)
         else setProfileOpen(false)
         return
       }
@@ -328,6 +452,10 @@ export function Feed() {
           list.length - 1,
           Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)),
         )
+        if (event.key === "ArrowDown" && !allowIndex(next)) {
+          if (!profileRef.current) setVipOpen(true)
+          return
+        }
         root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault()
@@ -372,8 +500,8 @@ export function Feed() {
   useEffect(() => {
     const root = scrollerRef.current
     if (!root) return
-    root.style.overflowY = profileOpen || vipOpen ? "hidden" : "auto"
-  }, [profileOpen, vipOpen])
+    root.style.overflowY = profileOpen || vipOpen || picsOpen ? "hidden" : "auto"
+  }, [profileOpen, vipOpen, picsOpen])
 
   useLayoutEffect(() => {
     if (!toast) return
@@ -473,16 +601,46 @@ function activeVideo() {
     })
   }
 
-  function onAccount(next: { username: string; vip: boolean } | null) {
+  function onAccount(
+    next: {
+      username: string
+      vip: boolean
+      inviteCode?: string | null
+      inviteCount?: number
+      inviteVipCount?: number
+      inviteNeed?: number
+    } | null,
+  ) {
     setUser(next)
     if (!next) return
     void fetch("/api/auth/me")
-      .then((response) => response.json() as Promise<{ vip?: boolean; savedIds?: string[]; likedIds?: string[] }>)
+      .then((response) =>
+        response.json() as Promise<{
+          vip?: boolean
+          inviteCode?: string | null
+          inviteCount?: number
+          inviteVipCount?: number
+          inviteNeed?: number
+          savedIds?: string[]
+          likedIds?: string[]
+        }>,
+      )
       .then((data) => {
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
         const vip = data.vip === true
-        setUser((current) => (current ? { ...current, vip } : current))
+        setUser((current) =>
+          current
+            ? {
+                ...current,
+                vip,
+                inviteCode: data.inviteCode ?? current.inviteCode ?? null,
+                inviteCount: data.inviteCount ?? current.inviteCount ?? 0,
+                inviteVipCount: data.inviteVipCount ?? current.inviteVipCount ?? 0,
+                inviteNeed: data.inviteNeed ?? current.inviteNeed ?? 5,
+              }
+            : current,
+        )
         setSavedIds((current) => {
           const merged = mergeIds(remote, current)
           if (vip) {
@@ -508,6 +666,7 @@ function activeVideo() {
   function goVip() {
     setVipOpen(false)
     setProfileOpen(false)
+    setPicsOpen(false)
     router.push("/vip")
   }
 
@@ -622,7 +781,7 @@ function activeVideo() {
                   active={index === active}
                   preload={Math.abs(index - active) <= 1}
                   muted={muted}
-                  paused={paused}
+                  paused={paused || watchBlocked}
                   saved={savedIds.includes(video.id)}
                   liked={likedIds.includes(video.id)}
                   profileName={user?.username ?? null}
@@ -637,7 +796,25 @@ function activeVideo() {
         </div>
 
         <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]">
-          <span className="w-10 sm:w-20" />
+          <button
+            type="button"
+            className="pointer-events-auto relative mt-0.5 flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ring-1 ring-white/25"
+            aria-label="美图"
+            onClick={() => setPicsOpen(true)}
+          >
+            {picThumb ? (
+              <img src={picThumb} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="grid h-full w-full place-items-center bg-gradient-to-br from-[#fe2c55]/80 to-[#25f4ee]/70 text-[10px] font-semibold tracking-wide">
+                美图
+              </span>
+            )}
+            {picThumb && (
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/45 py-px text-center text-[9px] font-semibold leading-none text-white/95">
+                美图
+              </span>
+            )}
+          </button>
           <nav className="pointer-events-auto flex items-center gap-6 pt-1 text-[17px] font-semibold">
             <TabButton active={tab === "saved"} onClick={() => selectTab("saved")}>
               收藏
@@ -706,6 +883,12 @@ function activeVideo() {
           onUser={onAccount}
           onOpenVip={goVip}
         />
+        <PicSheet
+          open={picsOpen}
+          vip={user?.vip === true}
+          onClose={() => setPicsOpen(false)}
+          onOpenVip={goVip}
+        />
         <div inert={!vipOpen} className={`absolute inset-0 z-40 ${vipOpen ? "" : "pointer-events-none"}`}>
           <button
             type="button"
@@ -720,7 +903,11 @@ function activeVideo() {
             aria-hidden={!vipOpen}
           >
             <h2 className="text-center text-base font-semibold">开通 VIP</h2>
-            <p className="mt-2 text-center text-sm text-white/60">收藏只对 VIP 开放，开通需充值 USDT</p>
+            <p className="mt-2 text-center text-sm text-white/60">
+              {watchBlocked
+                ? `今日免费 ${VIP_FREE_DAILY} 条已看完（已看 ${Math.min(VIP_FREE_DAILY, watchedCountToday())} 条）`
+                : `开通 VIP：无限看、可收藏、无限美图`}
+            </p>
             <button
               type="button"
               className="mt-5 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"

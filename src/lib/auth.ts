@@ -3,7 +3,15 @@ import { promisify } from "node:util"
 import { cookies } from "next/headers"
 import { getSessionsCollection, getUsersCollection, getVideoCollection, getVipOrdersCollection } from "@/lib/mongo"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
-import { VIP_NETWORK, VIP_ORDER_TTL_MS, VIP_PRICE_USDT, vipUsdtAddress } from "@/lib/vip"
+import {
+  VIP_AMOUNT_SLOTS,
+  VIP_AMOUNT_STEP,
+  VIP_INVITE_NEED,
+  VIP_NETWORK,
+  VIP_ORDER_TTL_MS,
+  VIP_PRICE_USDT,
+  vipUsdtAddress,
+} from "@/lib/vip"
 
 const scryptAsync = promisify(scrypt)
 const COOKIE = "sk_session"
@@ -51,6 +59,8 @@ export async function ensureAuthCollections() {
       const users = await getUsersCollection()
       const sessions = await getSessionsCollection()
       await users.createIndex({ usernameKey: 1 }, { unique: true })
+      await users.createIndex({ inviteCode: 1 }, { unique: true, sparse: true })
+      await users.createIndex({ invitedBy: 1 })
       await sessions.createIndex({ tokenHash: 1 }, { unique: true })
       await sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
     })().catch((error: unknown) => {
@@ -59,6 +69,53 @@ export async function ensureAuthCollections() {
     })
   }
   return ready
+}
+
+export function makeInviteCode() {
+  return randomBytes(4).toString("base64url").slice(0, 8)
+}
+
+export async function ensureInviteCode(username: string) {
+  await ensureAuthCollections()
+  const users = await getUsersCollection()
+  const key = username.toLocaleLowerCase()
+  const doc = await users.findOne({ usernameKey: key }, { projection: { inviteCode: 1 } })
+  if (typeof doc?.inviteCode === "string" && doc.inviteCode) return doc.inviteCode
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const inviteCode = makeInviteCode()
+    try {
+      const updated = await users.findOneAndUpdate(
+        { usernameKey: key, $or: [{ inviteCode: { $exists: false } }, { inviteCode: null }, { inviteCode: "" }] },
+        { $set: { inviteCode } },
+        { returnDocument: "after", projection: { inviteCode: 1 } },
+      )
+      if (typeof updated?.inviteCode === "string" && updated.inviteCode) return updated.inviteCode
+      const again = await users.findOne({ usernameKey: key }, { projection: { inviteCode: 1 } })
+      if (typeof again?.inviteCode === "string" && again.inviteCode) return again.inviteCode
+    } catch (error) {
+      if (!isDuplicateUser(error)) throw error
+    }
+  }
+  throw new Error("邀请码生成失败")
+}
+
+export async function inviteStats(username: string) {
+  await ensureAuthCollections()
+  const users = await getUsersCollection()
+  const inviteCode = await ensureInviteCode(username)
+  const inviteVipCount = await users.countDocuments({ invitedBy: username, vip: true })
+  const inviteCount = await users.countDocuments({ invitedBy: username })
+  return { inviteCode, inviteCount, inviteVipCount, inviteNeed: VIP_INVITE_NEED }
+}
+
+export async function resolveInviter(inviteCode: unknown) {
+  if (typeof inviteCode !== "string") return null
+  const code = inviteCode.trim()
+  if (!code || code.length > 32) return null
+  await ensureAuthCollections()
+  const users = await getUsersCollection()
+  const inviter = await users.findOne({ inviteCode: code }, { projection: { username: 1 } })
+  return typeof inviter?.username === "string" ? inviter.username : null
 }
 
 export async function openSession(username: string) {
@@ -104,22 +161,49 @@ export async function currentUser() {
   if (typeof session?.username !== "string") return null
   const users = await getUsersCollection()
   const doc = await users.findOne({ usernameKey: session.username.toLocaleLowerCase() })
+  const inviteCode = await ensureInviteCode(session.username)
+  const inviteVipCount = await users.countDocuments({ invitedBy: session.username, vip: true })
+  const inviteCount = await users.countDocuments({ invitedBy: session.username })
   return {
     username: session.username,
     vip: doc?.vip === true,
+    inviteCode,
+    inviteCount,
+    inviteVipCount,
+    inviteNeed: VIP_INVITE_NEED,
     savedIds: readSavedIds(doc?.savedIds),
     likedIds: readSavedIds(doc?.likedIds),
   }
 }
 
-export async function openVip(username: string) {
+async function maybeRewardInviter(username: string) {
+  const users = await getUsersCollection()
+  const user = await users.findOne(
+    { usernameKey: username.toLocaleLowerCase() },
+    { projection: { invitedBy: 1 } },
+  )
+  if (typeof user?.invitedBy !== "string" || !user.invitedBy) return
+  const inviteVipCount = await users.countDocuments({ invitedBy: user.invitedBy, vip: true })
+  if (inviteVipCount < VIP_INVITE_NEED) return
+  await openVip(user.invitedBy, "invite")
+}
+
+export async function openVip(username: string, source: "pay" | "invite" = "pay") {
   await ensureAuthCollections()
   const users = await getUsersCollection()
+  const key = username.toLocaleLowerCase()
+  const existing = await users.findOne({ usernameKey: key }, { projection: { vip: 1 } })
+  if (existing?.vip === true) return true
   await users.updateOne(
-    { usernameKey: username.toLocaleLowerCase() },
-    { $set: { vip: true, vipAt: new Date() } },
+    { usernameKey: key },
+    { $set: { vip: true, vipAt: new Date(), vipSource: source } },
   )
+  await maybeRewardInviter(username)
   return true
+}
+
+function amountSlot(amount: number) {
+  return Math.round((Number(amount) - VIP_PRICE_USDT) / VIP_AMOUNT_STEP)
 }
 
 async function nextVipAmount() {
@@ -129,12 +213,18 @@ async function nextVipAmount() {
     .find({ status: "pending", createdAt: { $gt: since } }, { projection: { amount: 1 } })
     .toArray()
   const used = new Set(
-    pending.map((item) => Math.round((Number(item.amount) - VIP_PRICE_USDT) * 100)).filter((n) => Number.isFinite(n)),
+    pending.map((item) => amountSlot(Number(item.amount))).filter((n) => Number.isFinite(n) && n >= 0 && n < VIP_AMOUNT_SLOTS),
   )
-  for (let cent = 0; cent <= 99; cent += 1) {
-    if (!used.has(cent)) return Math.round((VIP_PRICE_USDT + cent / 100) * 100) / 100
+  for (let slot = 0; slot < VIP_AMOUNT_SLOTS; slot += 1) {
+    if (!used.has(slot)) {
+      return Math.round((VIP_PRICE_USDT + slot * VIP_AMOUNT_STEP) * 1000) / 1000
+    }
   }
-  return Math.round((VIP_PRICE_USDT + (Date.now() % 100) / 100) * 100) / 100
+  throw new Error("当前充值的人有点多，请稍后再试")
+}
+
+function isDuplicateKey(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: number }).code === 11000
 }
 
 export async function ensurePendingVipOrder(username: string) {
@@ -144,6 +234,10 @@ export async function ensurePendingVipOrder(username: string) {
   const orders = await getVipOrdersCollection()
   await orders.createIndex({ txId: 1 }, { unique: true, sparse: true })
   await orders.createIndex({ username: 1, status: 1, createdAt: -1 })
+  await orders.createIndex(
+    { amount: 1 },
+    { unique: true, partialFilterExpression: { status: "pending" }, name: "pending_amount_unique" },
+  )
 
   const existing = await orders.findOne({
     username,
@@ -160,23 +254,31 @@ export async function ensurePendingVipOrder(username: string) {
     }
   }
 
-  const amount = await nextVipAmount()
-  const result = await orders.insertOne({
-    username,
-    amount,
-    currency: "USDT",
-    network: VIP_NETWORK,
-    address,
-    status: "pending",
-    createdAt: new Date(),
-  })
-  return {
-    orderId: String(result.insertedId),
-    amount,
-    address,
-    network: VIP_NETWORK,
-    currency: "USDT" as const,
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const amount = await nextVipAmount()
+    try {
+      const result = await orders.insertOne({
+        username,
+        amount,
+        currency: "USDT",
+        network: VIP_NETWORK,
+        address,
+        status: "pending",
+        createdAt: new Date(),
+      })
+      return {
+        orderId: String(result.insertedId),
+        amount,
+        address,
+        network: VIP_NETWORK,
+        currency: "USDT" as const,
+      }
+    } catch (error) {
+      if (isDuplicateKey(error) && attempt < 7) continue
+      throw error
+    }
   }
+  throw new Error("当前充值的人有点多，请稍后再试")
 }
 
 export async function confirmVipPayment(username: string) {
