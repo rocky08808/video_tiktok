@@ -3,10 +3,10 @@ import { promisify } from "node:util"
 import { cookies } from "next/headers"
 import { getSessionsCollection, getUsersCollection, getVideoCollection, getVipOrdersCollection } from "@/lib/mongo"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
+import { getAppSettings } from "@/lib/app-settings"
 import {
   VIP_AMOUNT_SLOTS,
   VIP_AMOUNT_STEP,
-  VIP_INVITE_NEED,
   VIP_NETWORK,
   VIP_ORDER_TTL_MS,
   VIP_PRICE_USDT,
@@ -105,7 +105,8 @@ export async function inviteStats(username: string) {
   const inviteCode = await ensureInviteCode(username)
   const inviteVipCount = await users.countDocuments({ invitedBy: username, vip: true })
   const inviteCount = await users.countDocuments({ invitedBy: username })
-  return { inviteCode, inviteCount, inviteVipCount, inviteNeed: VIP_INVITE_NEED }
+  const settings = await getAppSettings()
+  return { inviteCode, inviteCount, inviteVipCount, inviteNeed: settings.inviteNeed }
 }
 
 export async function resolveInviter(inviteCode: unknown) {
@@ -164,13 +165,16 @@ export async function currentUser() {
   const inviteCode = await ensureInviteCode(session.username)
   const inviteVipCount = await users.countDocuments({ invitedBy: session.username, vip: true })
   const inviteCount = await users.countDocuments({ invitedBy: session.username })
+  const settings = await getAppSettings()
   return {
     username: session.username,
     vip: doc?.vip === true,
     inviteCode,
     inviteCount,
     inviteVipCount,
-    inviteNeed: VIP_INVITE_NEED,
+    inviteNeed: settings.inviteNeed,
+    freeDailyVideos: settings.freeDailyVideos,
+    freeDailyPics: settings.freeDailyPics,
     savedIds: readSavedIds(doc?.savedIds),
     likedIds: readSavedIds(doc?.likedIds),
   }
@@ -183,12 +187,13 @@ async function maybeRewardInviter(username: string) {
     { projection: { invitedBy: 1 } },
   )
   if (typeof user?.invitedBy !== "string" || !user.invitedBy) return
+  const settings = await getAppSettings()
   const inviteVipCount = await users.countDocuments({ invitedBy: user.invitedBy, vip: true })
-  if (inviteVipCount < VIP_INVITE_NEED) return
+  if (inviteVipCount < settings.inviteNeed) return
   await openVip(user.invitedBy, "invite")
 }
 
-export async function openVip(username: string, source: "pay" | "invite" = "pay") {
+export async function openVip(username: string, source: "pay" | "invite" | "admin" = "pay") {
   await ensureAuthCollections()
   const users = await getUsersCollection()
   const key = username.toLocaleLowerCase()

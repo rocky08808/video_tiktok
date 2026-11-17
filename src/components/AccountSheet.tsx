@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
-import { VIP_FREE_DAILY, VIP_INVITE_NEED, VIP_PIC_FREE } from "@/lib/vip"
+import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { VIP_INVITE_NEED } from "@/lib/vip"
 
 type User = {
   username: string
@@ -56,6 +57,7 @@ export function AccountSheet({
   useEffect(() => {
     if (!open) return
     setInviteHint(readStoredInvite())
+    void fetchClientSettings()
   }, [open])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -131,7 +133,8 @@ export function AccountSheet({
     }
   }
 
-  const inviteNeed = user?.inviteNeed ?? VIP_INVITE_NEED
+  const settings = readClientSettings()
+  const inviteNeed = user?.inviteNeed ?? settings.inviteNeed ?? VIP_INVITE_NEED
   const inviteCount = user?.inviteCount ?? 0
   const inviteVipCount = user?.inviteVipCount ?? 0
   const inviteProgress = Math.min(1, inviteNeed > 0 ? inviteVipCount / inviteNeed : 0)
@@ -181,7 +184,7 @@ export function AccountSheet({
                 <p className="mt-1 text-[13px] leading-snug text-white/45">
                   {user.vip
                     ? `已收藏 ${savedCount} 条视频`
-                    : `每天 ${VIP_FREE_DAILY} 条 · 美图 ${VIP_PIC_FREE} 张 · VIP 全开放`}
+                    : `每天 ${settings.freeDailyVideos} 条视频 · ${settings.freeDailyPics} 张美图 · VIP 全开放`}
                 </p>
               </div>
             </div>

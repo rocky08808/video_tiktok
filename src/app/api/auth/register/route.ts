@@ -8,6 +8,7 @@ import {
   readCredentials,
   resolveInviter,
 } from "@/lib/auth"
+import { adminCredentials } from "@/lib/admin"
 import { describeMongoError, getUsersCollection } from "@/lib/mongo"
 
 export async function POST(request: Request) {
@@ -20,6 +21,10 @@ export async function POST(request: Request) {
   }
   const credentials = readCredentials(body)
   if ("error" in credentials) return Response.json(credentials, { status: 400 })
+  const adminName = adminCredentials().username
+  if (adminName && credentials.usernameKey === adminName.toLocaleLowerCase()) {
+    return Response.json({ error: "该用户名不可用" }, { status: 400 })
+  }
   const inviteCode =
     body && typeof body === "object" ? (body as { inviteCode?: unknown }).inviteCode : null
 

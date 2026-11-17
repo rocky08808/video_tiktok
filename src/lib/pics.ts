@@ -1,3 +1,4 @@
+import { getAppSettings } from "@/lib/app-settings"
 import { describeMongoError, getPicsCollection, mongoUri } from "@/lib/mongo"
 import { publicBase, resolveSrc } from "@/lib/r2"
 import { VIP_PIC_FREE } from "@/lib/vip"
@@ -41,15 +42,18 @@ function mapPic(doc: RawPic, base: string): PicItem | null {
 }
 
 export async function getRandomPics(vip: boolean) {
+  const settings = await getAppSettings()
+  const freeLimit = settings.freeDailyPics
   const base = publicBase()
   if (!mongoUri()) {
-    return { pics: [] as PicItem[], limited: !vip, freeLimit: PIC_FREE_LIMIT, error: "缺少 MONGODB_URI" }
+    return { pics: [] as PicItem[], limited: !vip, freeLimit, error: "缺少 MONGODB_URI" }
   }
   try {
     const collection = await getPicsCollection()
+    // VIP 多抽一些可换一批；非 VIP 当天由客户端缓存固定额度
     const docs = vip
-      ? ((await collection.aggregate([{ $sample: { size: 40 } }]).toArray()) as RawPic[])
-      : ((await collection.find({}).sort({ _id: 1 }).limit(PIC_FREE_LIMIT).toArray()) as RawPic[])
+      ? ((await collection.aggregate([{ $sample: { size: Math.max(40, freeLimit) } }]).toArray()) as RawPic[])
+      : ((await collection.aggregate([{ $sample: { size: freeLimit } }]).toArray()) as RawPic[])
     const mapped = docs.flatMap((doc) => {
       const item = mapPic(doc, base)
       return item ? [item] : []
@@ -58,7 +62,7 @@ export async function getRandomPics(vip: boolean) {
       return {
         pics: [] as PicItem[],
         limited: !vip,
-        freeLimit: PIC_FREE_LIMIT,
+        freeLimit,
         error: "pics 有数据，但图片地址拼不出来。需要 NEXT_PUBLIC_R2_PUBLIC_BASE，或把 pic 写成完整 https。",
       }
     }
@@ -66,21 +70,21 @@ export async function getRandomPics(vip: boolean) {
       return {
         pics: [] as PicItem[],
         limited: !vip,
-        freeLimit: PIC_FREE_LIMIT,
+        freeLimit,
         error: "pics 集合还是空的",
       }
     }
     return {
       pics: shuffle(mapped),
       limited: !vip,
-      freeLimit: PIC_FREE_LIMIT,
-      totalHint: vip ? mapped.length : PIC_FREE_LIMIT,
+      freeLimit,
+      totalHint: vip ? mapped.length : freeLimit,
     }
   } catch (error) {
     return {
       pics: [] as PicItem[],
       limited: !vip,
-      freeLimit: PIC_FREE_LIMIT,
+      freeLimit,
       error: describeMongoError(error),
     }
   }

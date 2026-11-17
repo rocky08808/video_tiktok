@@ -1,29 +1,22 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { VIP_PIC_FREE } from "@/lib/vip"
+import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { freePicLimit, readFreePicPack, writeFreePicPack, type PackedPic } from "@/lib/pic-pack"
 
-const PIC_FREE_LIMIT = VIP_PIC_FREE
-const PICS_CACHE_KEY = "sk_pics"
+const VIP_SESSION_KEY = "sk_pics_vip"
 
-type PicItem = {
-  id: string
-  name: string
-  src: string
-}
+type PicItem = PackedPic
 
-type PicsCache = {
-  vip: boolean
+type VipSessionCache = {
   pics: PicItem[]
   index: number
 }
 
-function readCache(vip: boolean): PicsCache | null {
+function readVipSession(): VipSessionCache | null {
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(PICS_CACHE_KEY) || "null") as PicsCache | null
-    if (!parsed || parsed.vip !== vip || !Array.isArray(parsed.pics) || parsed.pics.length === 0) {
-      return null
-    }
+    const parsed = JSON.parse(sessionStorage.getItem(VIP_SESSION_KEY) || "null") as VipSessionCache | null
+    if (!parsed || !Array.isArray(parsed.pics) || parsed.pics.length === 0) return null
     const pics = parsed.pics.filter(
       (item): item is PicItem =>
         !!item &&
@@ -33,18 +26,18 @@ function readCache(vip: boolean): PicsCache | null {
     )
     if (pics.length === 0) return null
     const index = Math.min(pics.length - 1, Math.max(0, Number(parsed.index) || 0))
-    return { vip, pics, index }
+    return { pics, index }
   } catch {
     return null
   }
 }
 
-function writeCache(vip: boolean, pics: PicItem[], index: number) {
+function writeVipSession(pics: PicItem[], index: number) {
   try {
     const safeIndex = Math.min(pics.length - 1, Math.max(0, index))
     sessionStorage.setItem(
-      PICS_CACHE_KEY,
-      JSON.stringify({ vip, pics, index: Number.isFinite(safeIndex) ? safeIndex : 0 } satisfies PicsCache),
+      VIP_SESSION_KEY,
+      JSON.stringify({ pics, index: Number.isFinite(safeIndex) ? safeIndex : 0 } satisfies VipSessionCache),
     )
   } catch {
     // ignore
@@ -75,26 +68,42 @@ export function PicSheet({
 
   indexRef.current = index
 
+  function persist(next: PicItem[], nextIndex: number) {
+    if (vip) writeVipSession(next, nextIndex)
+    else writeFreePicPack(next, nextIndex)
+  }
+
   function applyPics(next: PicItem[], nextIndex: number, nextLimited: boolean) {
     const safeIndex = Math.min(next.length - 1, Math.max(0, nextIndex))
     setLimited(nextLimited)
     setPics(next)
     setIndex(safeIndex)
     indexRef.current = safeIndex
-    writeCache(vip, next, safeIndex)
+    persist(next, safeIndex)
     restorePending.current = true
   }
 
   async function loadPics(force: boolean) {
     if (!force) {
-      const cached = readCache(vip)
-      if (cached) {
-        setError(null)
-        applyPics(cached.pics, cached.index, !vip)
-        setLoading(false)
-        return
+      if (vip) {
+        const cached = readVipSession()
+        if (cached) {
+          setError(null)
+          applyPics(cached.pics, cached.index, false)
+          setLoading(false)
+          return
+        }
+      } else {
+        const cached = readFreePicPack()
+        if (cached) {
+          setError(null)
+          applyPics(cached.pics, cached.index, true)
+          setLoading(false)
+          return
+        }
       }
     }
+
     const id = ++requestId.current
     setLoading(true)
     setError(null)
@@ -107,7 +116,7 @@ export function PicSheet({
       }
       if (id !== requestId.current) return
       const next = Array.isArray(data.pics) ? data.pics : []
-      const nextLimited = data.limited !== false && !vip
+      const nextLimited = !vip
       if (data.error && next.length === 0) {
         setError(data.error)
         setPics([])
@@ -118,7 +127,7 @@ export function PicSheet({
         setPics([])
         return
       }
-      applyPics(next, force ? 0 : indexRef.current, nextLimited)
+      applyPics(next, force ? 0 : 0, nextLimited)
     } catch {
       if (id !== requestId.current) return
       setError("网络不好，稍后再试")
@@ -129,7 +138,9 @@ export function PicSheet({
 
   useEffect(() => {
     if (!open) return
-    void loadPics(false)
+    void fetchClientSettings().then(() => {
+      void loadPics(false)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload when sheet opens or vip flips
   }, [open, vip])
 
@@ -149,7 +160,7 @@ export function PicSheet({
     if (next === indexRef.current) return
     indexRef.current = next
     setIndex(next)
-    writeCache(vip, pics, next)
+    persist(pics, next)
   }
 
   return (
@@ -180,7 +191,7 @@ export function PicSheet({
               {pics.length > 0
                 ? `${index + 1} / ${pics.length}`
                 : limited
-                  ? `免费前 ${PIC_FREE_LIMIT} 张`
+                  ? `今日免费 ${freePicLimit()} 张`
                   : "精选美图"}
             </p>
           </div>
@@ -247,7 +258,7 @@ export function PicSheet({
         {limited && (
           <div className="relative z-10 shrink-0 border-t border-white/10 bg-[#141018]/95 px-5 pt-3 pb-[max(14px,env(safe-area-inset-bottom))] backdrop-blur">
             <p className="text-center text-[12px] text-white/45">
-              普通用户可看前 {PIC_FREE_LIMIT} 张 · VIP 畅看全部美图
+              普通用户今日 {readClientSettings().freeDailyPics} 张 · VIP 畅看全部美图
             </p>
             <button
               type="button"

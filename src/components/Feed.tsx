@@ -7,8 +7,16 @@ import { IconFullscreen, IconVolume } from "@/components/icons"
 import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
-import { VIP_FREE_DAILY } from "@/lib/vip"
-import { canWatchVideo, noteWatchedId, watchedCountToday } from "@/lib/watch-limit"
+import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { readFreePicPack, writeFreePicPack } from "@/lib/pic-pack"
+import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
+import {
+  canWatchVideo,
+  ensureFreePackIds,
+  noteWatchedId,
+  readFreePackIds,
+  watchedCountToday,
+} from "@/lib/watch-limit"
 
 type Tab = "forYou" | "saved"
 
@@ -136,6 +144,7 @@ export function Feed() {
   const [picThumb, setPicThumb] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [watchBlocked, setWatchBlocked] = useState(false)
+  const [limits, setLimits] = useState(DEFAULT_APP_SETTINGS)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
   const picsRef = useRef(false)
@@ -174,25 +183,53 @@ export function Feed() {
   }, [picsOpen])
 
   useEffect(() => {
+    if (!user?.vip) {
+      const cached = readFreePicPack()
+      if (cached?.pics[0]?.src) {
+        setPicThumb(cached.pics[0].src)
+        return
+      }
+    }
     const controller = new AbortController()
     fetch("/api/pics", { signal: controller.signal })
-      .then((response) => response.json() as Promise<{ pics?: { src?: string }[] }>)
+      .then((response) => response.json() as Promise<{ pics?: { src?: string; name?: string; id?: string }[] }>)
       .then((data) => {
-        const first = data.pics?.find((item) => typeof item.src === "string" && item.src)
+        const list = Array.isArray(data.pics) ? data.pics : []
+        const first = list.find((item) => typeof item.src === "string" && item.src)
         if (first?.src) setPicThumb(first.src)
+        if (!user?.vip && list.length > 0) {
+          writeFreePicPack(
+            list.flatMap((item) =>
+              typeof item.id === "string" && typeof item.src === "string"
+                ? [{ id: item.id, name: typeof item.name === "string" ? item.name : "美图", src: item.src }]
+                : [],
+            ),
+            0,
+          )
+        }
       })
       .catch(() => {})
     return () => controller.abort()
   }, [user?.vip])
 
   const list = useMemo(() => {
-    if (tab !== "saved") return videos
+    if (tab === "saved") {
+      const byId = new Map(videos.map((video) => [video.id, video]))
+      return savedIds.flatMap((id) => {
+        const video = byId.get(id)
+        return video ? [video] : []
+      })
+    }
+    if (user?.vip) return videos
+    if (videos.length === 0) return []
+    const ids = readFreePackIds()
     const byId = new Map(videos.map((video) => [video.id, video]))
-    return savedIds.flatMap((id) => {
+    const packed = ids.flatMap((id) => {
       const video = byId.get(id)
       return video ? [video] : []
     })
-  }, [tab, videos, savedIds])
+    return packed.length > 0 ? packed : videos.slice(0, readClientSettings().freeDailyVideos)
+  }, [tab, videos, savedIds, user?.vip, limits.freeDailyVideos])
   listRef.current = list
 
   function allowIndex(index: number) {
@@ -201,6 +238,9 @@ export function Feed() {
     if (!video) return false
     return canWatchVideo(video.id, false)
   }
+
+  const limitBlocked =
+    !user?.vip && tab === "forYou" && !!list[active] && !canWatchVideo(list[active].id, false)
 
   useEffect(() => {
     if (tab !== "forYou") {
@@ -218,27 +258,39 @@ export function Feed() {
       setWatchBlocked(false)
       return
     }
-    // 已达免费上限：只暂停/回退，不自动弹 VIP（登录改 user 也会跑到这里）
     setWatchBlocked(true)
     setPaused(true)
     const root = scrollerRef.current
-    for (let index = active - 1; index >= 0; index -= 1) {
-      const previous = list[index]
-      if (!previous || !canWatchVideo(previous.id, false)) continue
-      activeRef.current = index
-      setActive(index)
-      if (root && root.clientHeight > 0) root.scrollTop = index * root.clientHeight
-      setWatchBlocked(false)
-      setPaused(false)
-      return
-    }
+    const pick = (() => {
+      for (let index = active - 1; index >= 0; index -= 1) {
+        if (canWatchVideo(list[index]?.id ?? "", false)) return index
+      }
+      for (let index = active + 1; index < list.length; index += 1) {
+        if (canWatchVideo(list[index]?.id ?? "", false)) return index
+      }
+      return -1
+    })()
+    if (pick < 0) return
+    activeRef.current = pick
+    setActive(pick)
+    if (root && root.clientHeight > 0) root.scrollTop = pick * root.clientHeight
+    noteWatchedId(list[pick].id)
+    setWatchBlocked(false)
+    setPaused(false)
   }, [active, list, tab, user?.vip])
+
   useEffect(() => {
     const controller = new AbortController()
-    fetch("/api/videos", { signal: controller.signal })
+    void fetchClientSettings()
+      .then((settings) => {
+        setLimits({ ...settings })
+        return fetch("/api/videos", { signal: controller.signal })
+      })
       .then((response) => response.json() as Promise<VideoFeedResponse>)
       .then((data) => {
-        setVideos(applyCountFixes(shuffle(data.videos ?? []), countFixes.current))
+        const all = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
+        ensureFreePackIds(all.map((video) => video.id))
+        setVideos(all)
         setMode(data.mode)
         setError(data.error ?? null)
       })
@@ -276,6 +328,8 @@ export function Feed() {
           inviteCount?: number
           inviteVipCount?: number
           inviteNeed?: number
+          freeDailyVideos?: number
+          freeDailyPics?: number
           savedIds?: string[]
           likedIds?: string[]
         }>,
@@ -283,6 +337,12 @@ export function Feed() {
       .then((data) => {
         const latestLocal = readLocalSaved()
         const latestLiked = readLocalLiked()
+        const settings = applyClientSettings({
+          freeDailyVideos: data.freeDailyVideos,
+          freeDailyPics: data.freeDailyPics,
+          inviteNeed: data.inviteNeed,
+        })
+        setLimits({ ...settings })
         if (!data.username) {
           setUser(null)
           setAuthReady(true)
@@ -297,7 +357,7 @@ export function Feed() {
           inviteCode: data.inviteCode ?? null,
           inviteCount: data.inviteCount ?? 0,
           inviteVipCount: data.inviteVipCount ?? 0,
-          inviteNeed: data.inviteNeed ?? 5,
+          inviteNeed: data.inviteNeed ?? settings.inviteNeed,
         })
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
@@ -377,6 +437,11 @@ export function Feed() {
       locked = true
       const current = Math.round(root.scrollTop / root.clientHeight)
       const next = Math.min(list.length - 1, Math.max(0, current + (event.deltaY > 0 ? 1 : -1)))
+      if (event.deltaY > 0 && next === current && !vipUserRef.current && tabRef.current === "forYou") {
+        locked = false
+        if (!profileRef.current) setVipOpen(true)
+        return
+      }
       if (event.deltaY > 0 && !allowIndex(next)) {
         locked = false
         if (!profileRef.current) setVipOpen(true)
@@ -452,6 +517,10 @@ export function Feed() {
           list.length - 1,
           Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)),
         )
+        if (event.key === "ArrowDown" && next === current && !vipUserRef.current && tabRef.current === "forYou") {
+          if (!profileRef.current) setVipOpen(true)
+          return
+        }
         if (event.key === "ArrowDown" && !allowIndex(next)) {
           if (!profileRef.current) setVipOpen(true)
           return
@@ -781,7 +850,7 @@ function activeVideo() {
                   active={index === active}
                   preload={Math.abs(index - active) <= 1}
                   muted={muted}
-                  paused={paused || watchBlocked}
+                  paused={paused || watchBlocked || limitBlocked}
                   saved={savedIds.includes(video.id)}
                   liked={likedIds.includes(video.id)}
                   profileName={user?.username ?? null}
@@ -903,11 +972,30 @@ function activeVideo() {
             aria-hidden={!vipOpen}
           >
             <h2 className="text-center text-base font-semibold">开通 VIP</h2>
-            <p className="mt-2 text-center text-sm text-white/60">
-              {watchBlocked
-                ? `今日免费 ${VIP_FREE_DAILY} 条已看完（已看 ${Math.min(VIP_FREE_DAILY, watchedCountToday())} 条）`
-                : `开通 VIP：无限看、可收藏、无限美图`}
-            </p>
+            {watchBlocked && (
+              <p className="mt-2 text-center text-sm text-[#ff8aa3]">
+                今日免费 {limits.freeDailyVideos} 条已看完（已看{" "}
+                {Math.min(limits.freeDailyVideos, watchedCountToday())} 条）
+              </p>
+            )}
+            <div className="mt-4 grid grid-cols-2 gap-2 text-left text-[13px]">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3">
+                <p className="text-[12px] text-white/40">普通用户</p>
+                <ul className="mt-2 space-y-1.5 text-white/65">
+                  <li>每天 {limits.freeDailyVideos} 条视频</li>
+                  <li>不能收藏</li>
+                  <li>每天 {limits.freeDailyPics} 张美图</li>
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-[#25f4ee]/25 bg-[linear-gradient(160deg,rgba(254,44,85,0.14),rgba(37,244,238,0.1))] px-3 py-3">
+                <p className="text-[12px] font-semibold text-[#25f4ee]">VIP</p>
+                <ul className="mt-2 space-y-1.5 text-white">
+                  <li>无限观看</li>
+                  <li>可收藏视频</li>
+                  <li>无限美图</li>
+                </ul>
+              </div>
+            </div>
             <button
               type="button"
               className="mt-5 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"

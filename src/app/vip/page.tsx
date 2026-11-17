@@ -3,13 +3,12 @@
 import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { storeInviteCode } from "@/components/AccountSheet"
+import { fetchClientSettings } from "@/lib/client-settings"
+import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import {
   formatVipAmount,
   tgSupportUrl,
-  VIP_FREE_DAILY,
-  VIP_INVITE_NEED,
   VIP_NETWORK,
-  VIP_PIC_FREE,
   VIP_PRICE_USDT,
   vipSupportMessage,
   vipUsdtAddress,
@@ -25,7 +24,9 @@ export default function VipPage() {
   const [inviteCode, setInviteCode] = useState<string | null>(null)
   const [inviteCount, setInviteCount] = useState(0)
   const [inviteVipCount, setInviteVipCount] = useState(0)
-  const [inviteNeed, setInviteNeed] = useState(VIP_INVITE_NEED)
+  const [inviteNeed, setInviteNeed] = useState(DEFAULT_APP_SETTINGS.inviteNeed)
+  const [freeDailyVideos, setFreeDailyVideos] = useState(DEFAULT_APP_SETTINGS.freeDailyVideos)
+  const [freeDailyPics, setFreeDailyPics] = useState(DEFAULT_APP_SETTINGS.freeDailyPics)
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [copied, setCopied] = useState<"address" | "invite" | null>(null)
@@ -56,6 +57,11 @@ export default function VipPage() {
     } catch {
       // ignore
     }
+    void fetchClientSettings().then((settings) => {
+      setFreeDailyVideos(settings.freeDailyVideos)
+      setFreeDailyPics(settings.freeDailyPics)
+      setInviteNeed(settings.inviteNeed)
+    })
   }, [])
 
   useEffect(() => {
@@ -103,7 +109,9 @@ export default function VipPage() {
         setInviteCode(typeof data.inviteCode === "string" ? data.inviteCode : null)
         setInviteCount(typeof data.inviteCount === "number" ? data.inviteCount : 0)
         setInviteVipCount(typeof data.inviteVipCount === "number" ? data.inviteVipCount : 0)
-        setInviteNeed(typeof data.inviteNeed === "number" ? data.inviteNeed : VIP_INVITE_NEED)
+        setInviteNeed(
+          typeof data.inviteNeed === "number" ? data.inviteNeed : DEFAULT_APP_SETTINGS.inviteNeed,
+        )
         if (data.vip === true) {
           setVip(true)
           setDone(true)
@@ -223,9 +231,9 @@ export default function VipPage() {
                 <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] px-3.5 py-3.5">
                   <p className="text-[12px] text-white/40">普通用户</p>
                   <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-white/70">
-                    <li>每天 {VIP_FREE_DAILY} 条</li>
+                    <li>每天 {freeDailyVideos} 条视频</li>
                     <li>不能收藏</li>
-                    <li>美图前 {VIP_PIC_FREE} 张</li>
+                    <li>每天 {freeDailyPics} 张美图</li>
                   </ul>
                 </div>
                 <div className="rounded-2xl border border-[#25f4ee]/20 bg-[linear-gradient(160deg,rgba(254,44,85,0.16),rgba(37,244,238,0.1))] px-3.5 py-3.5">

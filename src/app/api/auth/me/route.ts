@@ -1,10 +1,12 @@
 import { connection } from "next/server"
+import { getAppSettings } from "@/lib/app-settings"
 import { currentUser } from "@/lib/auth"
 import { describeMongoError } from "@/lib/mongo"
 
 export async function GET() {
   await connection()
   try {
+    const settings = await getAppSettings()
     const user = await currentUser()
     return Response.json(
       {
@@ -13,7 +15,9 @@ export async function GET() {
         inviteCode: user?.inviteCode ?? null,
         inviteCount: user?.inviteCount ?? 0,
         inviteVipCount: user?.inviteVipCount ?? 0,
-        inviteNeed: user?.inviteNeed ?? 5,
+        inviteNeed: user?.inviteNeed ?? settings.inviteNeed,
+        freeDailyVideos: user?.freeDailyVideos ?? settings.freeDailyVideos,
+        freeDailyPics: user?.freeDailyPics ?? settings.freeDailyPics,
         savedIds: user?.savedIds ?? [],
         likedIds: user?.likedIds ?? [],
       },
