@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 瞬看
 
-## Getting Started
+竖屏短视频。Next.js 用 HLS 播放 Cloudflare R2 里的 `m3u8`。
 
-First, run the development server:
+没配 R2 时会播放几条公开示例流，用来看上下滑、点赞和评论。示例流是横屏片源，页面会裁成竖屏。
+
+## 本地运行
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+打开 http://localhost:3000 。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 把视频放进 R2
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. 切成 HLS。分片和播放列表放在同一个目录，点播列表必须包含全部分片：
 
-## Learn More
+```bash
+ffmpeg -y -i input.mp4 -vf scale=720:-2 -c:v libx264 -profile:v main -level 4.0 -pix_fmt yuv420p -c:a aac -b:a 128k -ac 2 -hls_time 2 -hls_list_size 0 -hls_playlist_type vod -hls_segment_filename "seg_%03d.ts" index.m3u8
+```
 
-To learn more about Next.js, take a look at the following resources:
+已经是竖屏的素材可以改成 `-vf scale=-2:1280`。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+2. 按清单里的路径上传，例如：
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```text
+videos/001/index.m3u8
+videos/001/seg_000.ts
+videos/001/poster.jpg
+```
 
-## Deploy on Vercel
+`m3u8` 的 Content-Type 用 `application/vnd.apple.mpegurl`，`ts` 用 `video/mp2t`。
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+3. 给存储桶打开公开访问（`r2.dev` 子域或自定义域名）。浏览器直接拉流时还要配 CORS，规则在 `r2-cors.json`，来源可以改成你的站点。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+4. 复制环境变量并填公开域名：
+
+```bash
+cp .env.example .env.local
+```
+
+```bash
+NEXT_PUBLIC_R2_PUBLIC_BASE=https://pub-xxxxxxxx.r2.dev
+```
+
+5. 编辑 `src/data/catalog.json`。`src` 写成相对路径时，会拼到上面的域名后面。也可以写成完整的 `https://.../index.m3u8`。
+
+不想改代码时，把同样格式的 JSON 传到 R2，再设置 `R2_MANIFEST_URL`。示例见 `src/data/manifest.example.json`。
+
+暂时不能改 CORS 时，在 `.env.local` 加上 `HLS_PROXY=1`。页面会改走 `/api/hls`，由服务器去读 R2。流量会经过 Next，只适合开发和少量访问。
+
+## 连接宝塔 MongoDB
+
+视频文件仍在 R2。配了 `MONGODB_URI` 之后，信息流改从宝塔的 MongoDB 读，不再读 `catalog.json`。
+
+1. 宝塔软件商店安装 MongoDB。数据库里新建库，例如 `video`，记下用户名和密码。
+2. 本机调试时，配置文件里的 `bindIp` 加上 `0.0.0.0`，宝塔安全和云安全组放行 `27017`，来源尽量只填你的 IP。网站如果就跑在这台宝塔上，不要对外开放端口，连接用 `127.0.0.1`。
+3. 在 `.env.local` 加上连接串。宝塔这个用户的认证库是数据库名：
+
+```bash
+MONGODB_URI=mongodb://video_user:密码@服务器IP:27017/video?authSource=video
+NEXT_PUBLIC_R2_PUBLIC_BASE=https://pub-xxxxxxxx.r2.dev
+```
+
+4. 把当前清单写入数据库：
+
+```bash
+npm run db:seed
+```
+
+集合默认是 `videos`。每条记录的 `src` 仍然是 R2 上的 `m3u8` 路径。之后在宝塔或 Compass 里增删记录，刷新页面就会变。
+
+## 操作
+
+- 上滑、滚轮、上下键：切换视频
+- 单击：暂停或播放
+- 双击：点赞
+- 空格：暂停
+- M：开关声音
+- 底部细线：拖动进度
+
+Chrome 和 Firefox 用 hls.js。Safari 用系统自带的 HLS。当前这条和前后各一条会预加载。

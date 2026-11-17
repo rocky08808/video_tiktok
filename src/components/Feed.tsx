@@ -1,0 +1,712 @@
+"use client"
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
+import { AccountSheet } from "@/components/AccountSheet"
+import { IconFullscreen, IconVolume } from "@/components/icons"
+import { VideoSlide } from "@/components/VideoSlide"
+import type { VideoFeedResponse, VideoItem } from "@/lib/types"
+
+type Tab = "forYou" | "saved"
+
+const SAVED_KEY = "sk_saved"
+const LIKED_KEY = "sk_liked"
+
+function readLocalIds(key: string) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]") as unknown
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []
+  } catch {
+    return []
+  }
+}
+
+function readLocalSaved() {
+  return readLocalIds(SAVED_KEY)
+}
+
+function readLocalLiked() {
+  return readLocalIds(LIKED_KEY)
+}
+
+function rememberCounts(
+  fixes: { likes: Record<string, number>; bookmarks: Record<string, number> },
+  field: "likes" | "bookmarks",
+  counts: Record<string, number> | null | undefined,
+) {
+  if (!counts) return
+  Object.assign(fixes[field], counts)
+}
+
+function applyCountFixes(videos: VideoItem[], fixes: { likes: Record<string, number>; bookmarks: Record<string, number> }) {
+  return videos.map((video) => {
+    const likes = fixes.likes[video.id]
+    const bookmarks = fixes.bookmarks[video.id]
+    if (likes === undefined && bookmarks === undefined) return video
+    return {
+      ...video,
+      likes: likes ?? video.likes,
+      bookmarks: bookmarks ?? video.bookmarks,
+    }
+  })
+}
+
+function paintCounts(
+  setVideos: Dispatch<SetStateAction<VideoItem[]>>,
+  field: "likes" | "bookmarks",
+  counts: Record<string, number> | null | undefined,
+) {
+  if (!counts || Object.keys(counts).length === 0) return
+  setVideos((current) =>
+    current.map((video) => {
+      const value = counts[video.id]
+      return typeof value === "number" ? { ...video, [field]: value } : video
+    }),
+  )
+}
+
+let savedChain: Promise<unknown> = Promise.resolve()
+let likedChain: Promise<unknown> = Promise.resolve()
+
+function pushIds(kind: "saved" | "liked", ids: string[]) {
+  localStorage.setItem(kind === "saved" ? SAVED_KEY : LIKED_KEY, JSON.stringify(ids))
+  const run = async () => {
+    const response = await fetch(kind === "saved" ? "/api/auth/saved" : "/api/auth/likes", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(kind === "saved" ? { savedIds: ids } : { likedIds: ids }),
+    })
+    if (!response.ok) return null
+    const data = (await response.json()) as { counts?: Record<string, number> }
+    return data.counts ?? {}
+  }
+  const chain = kind === "saved" ? savedChain : likedChain
+  const next = chain.then(run, run)
+  if (kind === "saved") savedChain = next
+  else likedChain = next
+  return next
+}
+
+function mergeIds(remote: string[], local: string[]) {
+  const next = [...remote]
+  for (const id of local) {
+    if (!next.includes(id)) next.push(id)
+  }
+  return next
+}
+
+function sameIds(left: string[], right: string[]) {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+export function Feed() {
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef(0)
+  const forYouIndex = useRef(0)
+  const [videos, setVideos] = useState<VideoItem[]>([])
+  const [mode, setMode] = useState<VideoFeedResponse["mode"] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<Tab>("forYou")
+  const [active, setActive] = useState(0)
+  const [paused, setPaused] = useState(false)
+  const [muted, setMuted] = useState(true)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [banner, setBanner] = useState(true)
+  const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
+  const [toastOn, setToastOn] = useState(false)
+  const [savedIds, setSavedIds] = useState<string[]>([])
+  const [likedIds, setLikedIds] = useState<string[]>([])
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [user, setUser] = useState<{ username: string } | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const profileRef = useRef(false)
+  const countFixes = useRef<{ likes: Record<string, number>; bookmarks: Record<string, number> }>({
+    likes: {},
+    bookmarks: {},
+  })
+  const savedSeq = useRef(0)
+  const likedSeq = useRef(0)
+  profileRef.current = profileOpen
+
+  const pausedRef = useRef(paused)
+  const mutedRef = useRef(muted)
+
+  useEffect(() => {
+    activeRef.current = active
+    if (tab === "forYou") forYouIndex.current = active
+    pausedRef.current = paused
+    mutedRef.current = muted
+    profileRef.current = profileOpen
+  }, [active, paused, muted, profileOpen, tab])
+
+  const list = useMemo(() => {
+    if (tab !== "saved") return videos
+    const byId = new Map(videos.map((video) => [video.id, video]))
+    return savedIds.flatMap((id) => {
+      const video = byId.get(id)
+      return video ? [video] : []
+    })
+  }, [tab, videos, savedIds])
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch("/api/videos", { signal: controller.signal })
+      .then((response) => response.json() as Promise<VideoFeedResponse>)
+      .then((data) => {
+        setVideos(applyCountFixes(shuffle(data.videos ?? []), countFixes.current))
+        setMode(data.mode)
+        setError(data.error ?? null)
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return
+        setError("视频列表加载失败")
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const local = readLocalSaved()
+    const localLiked = readLocalLiked()
+    if (local.length > 0) setSavedIds(local)
+    if (localLiked.length > 0) setLikedIds(localLiked)
+    const controller = new AbortController()
+    fetch("/api/auth/me", { signal: controller.signal })
+      .then((response) => response.json() as Promise<{ username?: string | null; savedIds?: string[]; likedIds?: string[] }>)
+      .then((data) => {
+        const latestLocal = readLocalSaved()
+        const latestLiked = readLocalLiked()
+        if (!data.username) {
+          setUser(null)
+          setAuthReady(true)
+          if (latestLocal.length > 0) setSavedIds(latestLocal)
+          if (latestLiked.length > 0) setLikedIds(latestLiked)
+          return
+        }
+        setAuthReady(true)
+        setUser({ username: data.username })
+        const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
+        const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
+        setSavedIds((current) => {
+          const merged = mergeIds(remote, mergeIds(latestLocal, current))
+          if (!sameIds(merged, remote)) {
+            void pushIds("saved", merged).then((counts) => {
+              rememberCounts(countFixes.current, "bookmarks", counts)
+              paintCounts(setVideos, "bookmarks", counts)
+            })
+          } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
+          return merged
+        })
+        setLikedIds((current) => {
+          const merged = mergeIds(remoteLiked, mergeIds(latestLiked, current))
+          if (!sameIds(merged, remoteLiked)) {
+            void pushIds("liked", merged).then((counts) => {
+              rememberCounts(countFixes.current, "likes", counts)
+              paintCounts(setVideos, "likes", counts)
+            })
+          } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
+          return merged
+        })
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return
+        setAuthReady(true)
+      })
+    return () => controller.abort()
+  }, [])
+
+  useLayoutEffect(() => {
+    const root = scrollerRef.current
+    if (!root) return
+    const apply = () => root.style.setProperty("--slide-h", `${root.clientHeight}px`)
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const root = scrollerRef.current
+    if (!root || list.length === 0) return
+    const syncToScroll = () => {
+      if (root.clientHeight === 0) return
+      const index = Math.min(list.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
+      if (index === activeRef.current) return
+      activeRef.current = index
+      pauseOtherVideos(root, index)
+      setActive(index)
+      setPaused(false)
+    }
+    const observer = new IntersectionObserver(syncToScroll, {
+      root,
+      threshold: [0.6],
+    })
+    root.querySelectorAll<HTMLElement>("[data-index]").forEach((node) => observer.observe(node))
+    return () => observer.disconnect()
+  }, [list])
+
+  useEffect(() => {
+    const root = scrollerRef.current
+    if (!root) return
+    let locked = false
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return
+      event.preventDefault()
+      if (locked || profileRef.current || list.length === 0 || root.clientHeight === 0) return
+      if (Math.abs(event.deltaY) < 6) return
+      locked = true
+      const current = Math.round(root.scrollTop / root.clientHeight)
+      const next = Math.min(list.length - 1, Math.max(0, current + (event.deltaY > 0 ? 1 : -1)))
+      root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
+      window.setTimeout(() => {
+        locked = false
+      }, 520)
+    }
+    const onScroll = () => {
+      if (root.clientHeight === 0 || list.length === 0) return
+      const index = Math.min(list.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
+      pauseOtherVideos(root, index)
+      if (index === activeRef.current) return
+      activeRef.current = index
+      setActive(index)
+      setPaused(false)
+    }
+    root.addEventListener("wheel", onWheel, { passive: false })
+    root.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      root.removeEventListener("wheel", onWheel)
+      root.removeEventListener("scroll", onScroll)
+    }
+  }, [list.length])
+
+  useEffect(() => {
+    let lastTouch = 0
+    const stopDoubleTapZoom = (event: TouchEvent) => {
+      const now = Date.now()
+      if (now - lastTouch < 300) event.preventDefault()
+      lastTouch = now
+    }
+    const stopGesture = (event: Event) => {
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA") return
+      event.preventDefault()
+    }
+    document.addEventListener("touchend", stopDoubleTapZoom, { passive: false })
+    document.addEventListener("gesturestart", stopGesture)
+    document.addEventListener("dblclick", stopGesture)
+    return () => {
+      document.removeEventListener("touchend", stopDoubleTapZoom)
+      document.removeEventListener("gesturestart", stopGesture)
+      document.removeEventListener("dblclick", stopGesture)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && profileRef.current) {
+        setProfileOpen(false)
+        return
+      }
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA") return
+      if (profileRef.current) return
+      const root = scrollerRef.current
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault()
+        if (!root || list.length === 0 || root.clientHeight === 0) return
+        const current = Math.round(root.scrollTop / root.clientHeight)
+        const next = Math.min(
+          list.length - 1,
+          Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)),
+        )
+        root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault()
+        if (event.repeat) return
+        const element = root?.querySelector<HTMLVideoElement>("[data-active='true'] video")
+        if (!element) return
+        const duration = element.duration
+        if (!Number.isFinite(duration) || duration <= 0) return
+        const delta = event.key === "ArrowRight" ? 5 : -5
+        const next = Math.min(duration, Math.max(0, element.currentTime + delta))
+        if (Math.abs(next - element.currentTime) < 0.2) {
+          showToast(delta > 0 ? "已经是结尾" : "已经是开头")
+          return
+        }
+        element.currentTime = next
+        showToast(`${delta > 0 ? "快进" : "快退"} ${formatClock(next)}`)
+      } else if (event.key === " ") {
+        event.preventDefault()
+        const nextPaused = !pausedRef.current
+        const element = root?.querySelector<HTMLVideoElement>("[data-active='true'] video")
+        if (element) {
+          if (nextPaused) element.pause()
+          else void element.play().catch(() => {})
+        }
+        setPaused(nextPaused)
+      } else if (event.key === "m" || event.key === "M") {
+        event.preventDefault()
+        const next = !mutedRef.current
+        const element = root?.querySelector<HTMLVideoElement>("[data-active='true'] video")
+        if (element) {
+          element.muted = next
+          if (!next) void element.play().catch(() => {})
+        }
+        mutedRef.current = next
+        setMuted(next)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [list.length])
+
+  useEffect(() => {
+    const root = scrollerRef.current
+    if (!root) return
+    root.style.overflowY = profileOpen ? "hidden" : "auto"
+  }, [profileOpen])
+
+  useLayoutEffect(() => {
+    if (!toast) return
+    setToastOn(false)
+  }, [toast])
+
+  useEffect(() => {
+    if (!toast) return
+    const enter = window.requestAnimationFrame(() => setToastOn(true))
+    const fade = window.setTimeout(() => setToastOn(false), 500)
+    const clear = window.setTimeout(() => setToast(null), 680)
+    return () => {
+      window.cancelAnimationFrame(enter)
+      window.clearTimeout(fade)
+      window.clearTimeout(clear)
+    }
+  }, [toast])
+
+  function showToast(text: string) {
+    setToast({ text, id: Date.now() })
+  }
+
+  function pauseOtherVideos(root: HTMLElement, keep: number) {
+  root.querySelectorAll<HTMLElement>("[data-index]").forEach((slide) => {
+    if (Number(slide.dataset.index) === keep) return
+    slide.querySelector("video")?.pause()
+  })
+}
+
+function activeVideo() {
+    return scrollerRef.current?.querySelector<HTMLVideoElement>("[data-active='true'] video") ?? null
+  }
+
+  function setPlayback(nextPaused: boolean) {
+    const element = activeVideo()
+    if (element) {
+      if (nextPaused) element.pause()
+      else void element.play().catch(() => {})
+    }
+    setPaused(nextPaused)
+  }
+
+  function changeCount(id: string, field: "likes" | "bookmarks", delta: number) {
+    setVideos((current) =>
+      current.map((video) => {
+        if (video.id !== id) return video
+        const value = Math.max(0, video[field] + delta)
+        countFixes.current[field][id] = value
+        return { ...video, [field]: value }
+      }),
+    )
+  }
+
+  function toggleSaved(id: string) {
+    if (authReady && !user) {
+      setProfileOpen(true)
+      return
+    }
+    const adding = !savedIds.includes(id)
+    const next = adding ? [id, ...savedIds.filter((item) => item !== id)] : savedIds.filter((item) => item !== id)
+    const seq = ++savedSeq.current
+    setSavedIds(next)
+    if (user) changeCount(id, "bookmarks", adding ? 1 : -1)
+    void pushIds("saved", next).then((counts) => {
+      if (seq !== savedSeq.current) return
+      if (counts) {
+        rememberCounts(countFixes.current, "bookmarks", counts)
+        paintCounts(setVideos, "bookmarks", counts)
+        return
+      }
+      if (user) changeCount(id, "bookmarks", adding ? -1 : 1)
+    })
+  }
+
+  function toggleLike(id: string) {
+    if (authReady && !user) {
+      setProfileOpen(true)
+      return
+    }
+    const adding = !likedIds.includes(id)
+    const next = adding ? [...likedIds, id] : likedIds.filter((item) => item !== id)
+    const seq = ++likedSeq.current
+    setLikedIds(next)
+    if (user) changeCount(id, "likes", adding ? 1 : -1)
+    void pushIds("liked", next).then((counts) => {
+      if (seq !== likedSeq.current) return
+      if (counts) {
+        rememberCounts(countFixes.current, "likes", counts)
+        paintCounts(setVideos, "likes", counts)
+        return
+      }
+      if (user) changeCount(id, "likes", adding ? -1 : 1)
+    })
+  }
+
+  function onAccount(next: { username: string } | null) {
+    setUser(next)
+    if (!next) return
+    void fetch("/api/auth/me")
+      .then((response) => response.json() as Promise<{ savedIds?: string[]; likedIds?: string[] }>)
+      .then((data) => {
+        const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
+        const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
+        setSavedIds((current) => {
+          const merged = mergeIds(remote, current)
+          void pushIds("saved", merged).then((counts) => {
+            rememberCounts(countFixes.current, "bookmarks", counts)
+            paintCounts(setVideos, "bookmarks", counts)
+          })
+          return merged
+        })
+        setLikedIds((current) => {
+          const merged = mergeIds(remoteLiked, current)
+          void pushIds("liked", merged).then((counts) => {
+            rememberCounts(countFixes.current, "likes", counts)
+            paintCounts(setVideos, "likes", counts)
+          })
+          return merged
+        })
+      })
+      .catch(() => {})
+  }
+
+  function selectTab(next: Tab) {
+    if (next === tab) return
+    if (tab === "forYou") forYouIndex.current = activeRef.current
+    const index = next === "forYou" ? forYouIndex.current : 0
+    activeRef.current = index
+    setTab(next)
+    setActive(index)
+    setPaused(false)
+  }
+
+  useLayoutEffect(() => {
+    const root = scrollerRef.current
+    if (!root || root.clientHeight === 0) return
+    const count = root.querySelectorAll("[data-index]").length
+    const index = tab === "forYou" ? Math.min(forYouIndex.current, Math.max(0, count - 1)) : 0
+    activeRef.current = index
+    root.scrollTop = index * root.clientHeight
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== "saved" || list.length === 0 || activeRef.current < list.length) return
+    const index = list.length - 1
+    const root = scrollerRef.current
+    activeRef.current = index
+    setActive(index)
+    if (root && root.clientHeight > 0) root.scrollTo({ top: index * root.clientHeight })
+  }, [list.length, tab])
+
+  useEffect(() => {
+    const onChange = () => setFullscreen(document.fullscreenElement === stageRef.current)
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
+
+  function toggleFullscreen() {
+    const stage = stageRef.current
+    if (!stage) return
+    if (document.fullscreenElement) {
+      void document.exitFullscreen()
+      return
+    }
+    void stage.requestFullscreen().catch(() => {})
+  }
+
+  function toggleMute() {
+    const next = !muted
+    const element = activeVideo()
+    if (element) {
+      element.muted = next
+      if (!next) void element.play().catch(() => {})
+    }
+    setMuted(next)
+  }
+
+  const showBanner = mode === "demo" && banner
+  return (
+    <div className="flex h-dvh w-full items-center justify-center bg-[#1a1020] text-white">
+      <div
+        ref={stageRef}
+        className="stage relative h-dvh w-full overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:shadow-[0_24px_80px_rgba(0,0,0,.45)] sm:ring-1 sm:ring-white/10"
+      >
+        <div ref={scrollerRef} className="feed-scroller">
+          {loading ? (
+            <div className="feed-slide grid place-items-center">
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+            </div>
+          ) : error && videos.length === 0 ? (
+            <div className="feed-slide grid place-items-center px-8 text-center">
+              <div>
+                <p className="text-lg font-medium">没有播出来</p>
+                <p className="mt-2 text-sm leading-6 text-white/60">{error}</p>
+              </div>
+            </div>
+          ) : list.length === 0 ? (
+            <div className="feed-slide grid place-items-center px-8 text-center">
+              <div>
+                <p className="text-lg font-medium">还没有收藏</p>
+                <button
+                  type="button"
+                  className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
+                  onClick={() => selectTab("forYou")}
+                >
+                  去推荐看看
+                </button>
+              </div>
+            </div>
+          ) : (
+            list.map((video, index) =>
+              Math.abs(index - active) > 3 ? (
+                <div key={video.id} data-index={index} className="feed-slide" />
+              ) : (
+                <VideoSlide
+                  key={video.id}
+                  video={video}
+                  index={index}
+                  active={index === active}
+                  preload={Math.abs(index - active) <= 1}
+                  muted={muted}
+                  paused={paused}
+                  saved={savedIds.includes(video.id)}
+                  liked={likedIds.includes(video.id)}
+                  profileName={user?.username ?? null}
+                  onPausedChange={setPlayback}
+                  onToggleSaved={() => toggleSaved(video.id)}
+                  onToggleLike={() => toggleLike(video.id)}
+                  onOpenProfile={() => setProfileOpen(true)}
+                />
+              ),
+            )
+          )}
+        </div>
+
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]">
+          <span className="w-10 sm:w-20" />
+          <nav className="pointer-events-auto flex items-center gap-6 pt-1 text-[17px] font-semibold">
+            <TabButton active={tab === "saved"} onClick={() => selectTab("saved")}>
+              收藏
+            </TabButton>
+            <TabButton active={tab === "forYou"} onClick={() => selectTab("forYou")}>
+              推荐
+            </TabButton>
+          </nav>
+          <div className="flex items-center">
+            <button
+              type="button"
+              className="pointer-events-auto hidden h-10 w-10 place-items-center sm:grid"
+              aria-label={fullscreen ? "退出全屏" : "全屏"}
+              onClick={toggleFullscreen}
+            >
+              <IconFullscreen active={fullscreen} />
+            </button>
+            <button
+              type="button"
+              className="pointer-events-auto grid h-10 w-10 place-items-center"
+              aria-label={muted ? "打开声音" : "静音"}
+              onClick={toggleMute}
+            >
+              <IconVolume muted={muted} />
+            </button>
+          </div>
+        </header>
+
+        {showBanner && (
+          <div className="absolute inset-x-3 top-14 z-30 flex items-start gap-3 rounded-2xl bg-black/60 px-3 py-2 text-[12px] leading-5 text-white/90 backdrop-blur-md">
+            <p className="flex-1">
+              正在播放公开示例流。把 m3u8 上传到 R2 后，在 .env.local 填写 NEXT_PUBLIC_R2_PUBLIC_BASE。
+            </p>
+            <button
+              type="button"
+              className="shrink-0 text-white/70"
+              onClick={() => setBanner(false)}
+            >
+              关闭
+            </button>
+          </div>
+        )}
+
+        {muted && !showBanner && !loading && list.length > 0 && (
+          <button
+            type="button"
+            className="absolute left-1/2 top-[4.5rem] z-30 -translate-x-1/2 rounded-full bg-white/15 px-3 py-1 text-xs backdrop-blur"
+            onClick={toggleMute}
+          >
+            点击打开声音
+          </button>
+        )}
+
+        {toast && (
+          <div
+            className={`pointer-events-none absolute left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-[calc(50%+4.5rem)] rounded-lg bg-black/40 px-4 py-2 text-sm backdrop-blur-md transition-opacity duration-150 ease-out ${toastOn ? "opacity-100" : "opacity-0"}`}
+          >
+            {toast.text}
+          </div>
+        )}
+        <AccountSheet
+          open={profileOpen}
+          user={user}
+          savedCount={savedIds.length}
+          onClose={() => setProfileOpen(false)}
+          onUser={onAccount}
+        />
+      </div>
+    </div>
+  )
+}
+
+function shuffle<T>(items: T[]) {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1))
+    const current = next[index]
+    next[index] = next[swap]
+    next[swap] = current
+  }
+  return next
+}
+
+function formatClock(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(total / 60)
+  const remain = total % 60
+  return `${minutes}:${remain.toString().padStart(2, "0")}`
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button type="button" className={`relative ${active ? "text-white" : "text-white/50"}`} onClick={onClick}>
+      {children}
+      {active && <span className="absolute -bottom-1.5 left-1/2 h-0.5 w-5 -translate-x-1/2 rounded-full bg-white" />}
+    </button>
+  )
+}
