@@ -254,13 +254,12 @@ export function VideoSlide({
           <button
             type="button"
             aria-label="个人中心"
-            className="mt-1 flex flex-col items-center gap-1"
+            className="mt-1 grid place-items-center"
             onClick={onOpenProfile}
           >
             <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border-2 border-white/80 bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-base font-semibold text-white">
               {profileName ? Array.from(profileName)[0] : <IconUser />}
             </span>
-            <span className="text-shadow text-[12px] font-semibold">我的</span>
           </button>
         </div>
       </div>
