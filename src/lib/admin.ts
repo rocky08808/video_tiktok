@@ -255,12 +255,12 @@ function orderCreatedAt(value: unknown) {
   return null
 }
 
-function resolveOrderStatus(doc: { status?: unknown; createdAt?: unknown }): AdminOrderStatus {
-  const raw = typeof doc.status === "string" ? doc.status : "pending"
+function resolveOrderStatus(status: unknown, createdAt: unknown): AdminOrderStatus {
+  const raw = typeof status === "string" ? status : "pending"
   if (raw === "paid") return "paid"
   if (raw === "cancelled") return "cancelled"
   if (raw === "pending") {
-    const created = orderCreatedAt(doc.createdAt)
+    const created = orderCreatedAt(createdAt)
     if (created && Date.now() - created.getTime() > VIP_ORDER_TTL_MS) return "expired"
     return "pending"
   }
@@ -313,7 +313,7 @@ export async function listVipOrders(input: {
 
   const items: AdminOrderRow[] = docs.map((doc) => {
     const amount = Number(doc.amount)
-    const resolved = resolveOrderStatus(doc)
+    const resolved = resolveOrderStatus(doc.status, doc.createdAt)
     return {
       id: String(doc._id),
       username: typeof doc.username === "string" ? doc.username : "—",
