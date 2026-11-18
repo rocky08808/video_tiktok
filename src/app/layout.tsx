@@ -1,25 +1,111 @@
-import type { Metadata, Viewport } from "next";
-import "./globals.css";
+import type { Metadata, Viewport } from "next"
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TAGLINE, siteUrl } from "@/lib/site"
+import "./globals.css"
+
+const origin = siteUrl()
 
 export const metadata: Metadata = {
-  title: "瞬看",
-  description: "竖屏短视频，播放 Cloudflare R2 上的 HLS（m3u8）",
-  referrer: "no-referrer",
-};
+  metadataBase: origin ? new URL(origin) : undefined,
+  title: {
+    default: `${SITE_NAME} · ${SITE_TAGLINE}`,
+    template: `%s · ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: ["瞬看", "短视频", "竖屏视频", "美图", "VIP", "推荐视频", "在线刷视频"],
+  authors: [{ name: SITE_NAME }],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  referrer: "origin-when-cross-origin",
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
+  alternates: origin
+    ? {
+        canonical: "/",
+      }
+    : undefined,
+  openGraph: {
+    type: "website",
+    locale: "zh_CN",
+    siteName: SITE_NAME,
+    title: `${SITE_NAME} · ${SITE_TAGLINE}`,
+    description: SITE_DESCRIPTION,
+    url: origin || undefined,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${SITE_NAME} · ${SITE_TAGLINE}`,
+    description: SITE_DESCRIPTION,
+  },
+  category: "entertainment",
+}
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#000000",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0c0a10" },
+    { media: "(prefers-color-scheme: light)", color: "#0c0a10" },
+  ],
   viewportFit: "cover",
-};
+  colorScheme: "dark",
+}
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        name: SITE_NAME,
+        alternateName: ["瞬看短视频", "瞬看 App"],
+        description: SITE_DESCRIPTION,
+        inLanguage: "zh-CN",
+        ...(origin ? { url: origin } : {}),
+      },
+      {
+        "@type": "WebApplication",
+        name: SITE_NAME,
+        applicationCategory: "MultimediaApplication",
+        operatingSystem: "Web",
+        description: SITE_DESCRIPTION,
+        inLanguage: "zh-CN",
+        ...(origin ? { url: origin } : {}),
+        offers: {
+          "@type": "Offer",
+          price: "0",
+          priceCurrency: "CNY",
+          description: "基础免费观看，VIP 可无限观看与收藏",
+        },
+      },
+    ],
+  }
+
   return (
     <html lang="zh-CN" className="h-full">
+      <head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        />
+      </head>
       <body className="h-dvh overflow-hidden antialiased">{children}</body>
     </html>
-  );
+  )
 }
