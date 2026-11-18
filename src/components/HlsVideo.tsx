@@ -52,12 +52,13 @@ export function HlsVideo({
     if (!active) setShowPoster(Boolean(poster))
   }, [active, paused, poster, onBuffering, onProgress, onError])
 
+  const playerRef = useRef<Hls | null>(null)
+
   useEffect(() => {
     const video = videoRef.current
     if (!video || !preload) return
 
     let destroyed = false
-    let player: Hls | null = null
     nativeRef.current = false
 
     const playIfNeeded = () => {
@@ -86,20 +87,24 @@ export function HlsVideo({
       }
 
       let recovered = 0
-      player = new HlsCtor({
-        enableWorker: false,
+      const player = new HlsCtor({
+        enableWorker: true,
         capLevelToPlayerSize: true,
-        maxBufferLength: 14,
-        backBufferLength: 12,
+        // 预加载条只缓冲短一点，减轻越刷越卡
+        maxBufferLength: activeRef.current ? 10 : 4,
+        maxMaxBufferLength: 12,
+        backBufferLength: 4,
+        startLevel: -1,
       })
+      playerRef.current = player
       const fail = () => {
-        player?.destroy()
-        player = null
+        player.destroy()
+        if (playerRef.current === player) playerRef.current = null
         onErrorRef.current("视频加载失败")
       }
       player.on(HlsCtor.Events.MANIFEST_PARSED, playIfNeeded)
       player.on(HlsCtor.Events.ERROR, (_event, data) => {
-        if (!data.fatal || !player) return
+        if (!data.fatal || playerRef.current !== player) return
         recovered += 1
         if (recovered > 2) {
           fail()
@@ -111,13 +116,15 @@ export function HlsVideo({
       })
       player.loadSource(src)
       player.attachMedia(video)
+      if (!activeRef.current) player.stopLoad()
     }
 
     void attach()
 
     return () => {
       destroyed = true
-      player?.destroy()
+      playerRef.current?.destroy()
+      playerRef.current = null
       video.pause()
       video.removeAttribute("src")
       video.load()
@@ -133,6 +140,11 @@ export function HlsVideo({
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    const player = playerRef.current
+    if (player) {
+      if (active) player.startLoad()
+      else player.stopLoad()
+    }
     if (active && !paused) {
       void video.play().then(() => {
         if (!activeRef.current || pausedRef.current) video.pause()

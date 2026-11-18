@@ -460,7 +460,7 @@ export function Feed() {
     })
     root.querySelectorAll<HTMLElement>("[data-index]").forEach((node) => observer.observe(node))
     return () => observer.disconnect()
-  }, [list])
+  }, [list, active])
 
   useEffect(() => {
     const root = scrollerRef.current
@@ -930,26 +930,51 @@ function activeVideo() {
               </div>
             </div>
           ) : (
-            list.map((video, index) =>
-              Math.abs(index - active) > 3 ? (
-                <div key={video.id} data-index={index} className="feed-slide" />
-              ) : (
-                <VideoSlide
-                  key={video.id}
-                  video={video}
-                  index={index}
-                  active={index === active}
-                  preload={Math.abs(index - active) <= 1}
-                  muted={muted}
-                  paused={paused || watchBlocked || limitBlocked}
-                  saved={savedIds.includes(video.id)}
-                  liked={likedIds.includes(video.id)}
-                  onPausedChange={setPlayback}
-                  onToggleSaved={() => toggleSaved(video.id)}
-                  onToggleLike={() => toggleLike(video.id)}
-                />
-              ),
-            )
+            (() => {
+              // 只挂载附近几条，避免整表上千个 DOM + 多路 HLS 越刷越卡
+              const windowSize = 2
+              const from = Math.max(0, active - windowSize)
+              const to = Math.min(list.length - 1, active + windowSize)
+              const before = from
+              const after = list.length - 1 - to
+              return (
+                <>
+                  {before > 0 ? (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none shrink-0"
+                      style={{ height: `calc(${before} * var(--slide-h, 100%))` }}
+                    />
+                  ) : null}
+                  {list.slice(from, to + 1).map((video, offset) => {
+                    const index = from + offset
+                    return (
+                      <VideoSlide
+                        key={video.id}
+                        video={video}
+                        index={index}
+                        active={index === active}
+                        preload={Math.abs(index - active) <= 1}
+                        muted={muted}
+                        paused={paused || watchBlocked || limitBlocked}
+                        saved={savedIds.includes(video.id)}
+                        liked={likedIds.includes(video.id)}
+                        onPausedChange={setPlayback}
+                        onToggleSaved={() => toggleSaved(video.id)}
+                        onToggleLike={() => toggleLike(video.id)}
+                      />
+                    )
+                  })}
+                  {after > 0 ? (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none shrink-0"
+                      style={{ height: `calc(${after} * var(--slide-h, 100%))` }}
+                    />
+                  ) : null}
+                </>
+              )
+            })()
           )}
         </div>
 
