@@ -79,7 +79,7 @@ export function VideoSlide({
       return
     }
     setEngageHidden(false)
-    const timer = window.setTimeout(() => setEngageHidden(true), 3000)
+    const timer = window.setTimeout(() => setEngageHidden(true), 5000)
     return () => window.clearTimeout(timer)
   }, [active, paused, failed, buffering, video.src])
 
