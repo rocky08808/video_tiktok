@@ -78,6 +78,7 @@ export async function ensureAuthCollections() {
       await users.createIndex({ inviteCode: 1 }, { unique: true, sparse: true })
       await users.createIndex({ invitedBy: 1 })
       await sessions.createIndex({ tokenHash: 1 }, { unique: true })
+      await sessions.createIndex({ username: 1 })
       await sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
       await ensureReactionIndexes()
     })().catch((error: unknown) => {
@@ -155,6 +156,8 @@ export async function resolveInviter(inviteCode: unknown) {
 export async function openSession(username: string) {
   const token = randomBytes(32).toString("base64url")
   const sessions = await getSessionsCollection()
+  // 单点登录：同一账号只保留最新会话，旧端立刻失效
+  await sessions.deleteMany({ username })
   await sessions.insertOne({
     tokenHash: hashToken(token),
     username,
@@ -227,6 +230,17 @@ export async function currentUser() {
     savedPicIds,
     likedPicIds,
   }
+}
+
+/** cookie 在但 session 已失效（含被单点顶掉）时 kicked=true，并清掉脏 cookie */
+export async function authSnapshot() {
+  const jar = await cookies()
+  const token = jar.get(COOKIE)?.value
+  if (!token) return { user: null, kicked: false }
+  const user = await currentUser()
+  if (user) return { user, kicked: false }
+  jar.delete(COOKIE)
+  return { user: null, kicked: true }
 }
 
 async function extendVip(

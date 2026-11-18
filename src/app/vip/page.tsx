@@ -6,6 +6,7 @@ import { storeInviteCode } from "@/components/AccountSheet"
 import { BrandLogo } from "@/components/BrandLogo"
 import { fetchClientSettings } from "@/lib/client-settings"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
+import { noteAuthResponse } from "@/lib/session-client"
 import {
   formatVipAmount,
   formatVipUntilLabel,
@@ -96,18 +97,20 @@ export default function VipPage() {
   useEffect(() => {
     const controller = new AbortController()
     fetch("/api/auth/me", { signal: controller.signal })
-      .then(
-        (response) =>
-          response.json() as Promise<{
-            username?: string | null
-            vip?: boolean
-            vipUntil?: string | null
-            inviteCode?: string | null
-            inviteCount?: number
-            inviteVipCount?: number
-            inviteNeed?: number
-          }>,
-      )
+      .then(async (response) => {
+        const data = (await response.json()) as {
+          username?: string | null
+          vip?: boolean
+          vipUntil?: string | null
+          inviteCode?: string | null
+          inviteCount?: number
+          inviteVipCount?: number
+          inviteNeed?: number
+          kicked?: boolean
+        }
+        noteAuthResponse(response, data)
+        return data
+      })
       .then(async (data) => {
         const name = data.username ?? null
         setUsername(name)
@@ -127,6 +130,11 @@ export default function VipPage() {
           amount?: number
           address?: string
           error?: string
+        }
+        if (noteAuthResponse(orderResponse)) {
+          setUsername(null)
+          setError("账号已在别处登录")
+          return
         }
         if (!orderResponse.ok) {
           setError(order.error || "订单创建失败")
@@ -174,6 +182,11 @@ export default function VipPage() {
         vipUntil?: string | null
         amount?: number
         error?: string
+      }
+      if (noteAuthResponse(response)) {
+        setUsername(null)
+        setError("账号已在别处登录")
+        return
       }
       if (typeof data.amount === "number") setAmount(data.amount)
       if (!response.ok || !data.vip) {

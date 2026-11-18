@@ -11,6 +11,7 @@ import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/
 import { formatCount } from "@/lib/format"
 import { readFreePicPack, writeFreePicPack } from "@/lib/pic-pack"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
+import { noteAuthResponse, SESSION_KICKED_EVENT } from "@/lib/session-client"
 import {
   canWatchVideo,
   ensureFreePackIds,
@@ -124,6 +125,7 @@ function pushIds(kind: "saved" | "liked", ids: string[]) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(kind === "saved" ? { savedIds: ids } : { likedIds: ids }),
     })
+    if (noteAuthResponse(response)) return null
     if (!response.ok) return null
     const data = (await response.json()) as { counts?: Record<string, number> }
     return data.counts ?? {}
@@ -165,7 +167,7 @@ export function Feed() {
   const [muted, setMuted] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
   const [banner, setBanner] = useState(true)
-  const [toast, setToast] = useState<{ text: string; id: number } | null>(null)
+  const [toast, setToast] = useState<{ text: string; id: number; ms: number } | null>(null)
   const [toastOn, setToastOn] = useState(false)
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [likedIds, setLikedIds] = useState<string[]>([])
@@ -214,6 +216,9 @@ export function Feed() {
 
   const pausedRef = useRef(paused)
   const mutedRef = useRef(muted)
+  const userRef = useRef(user)
+  userRef.current = user
+  const kickedLock = useRef(false)
 
   useEffect(() => {
     activeRef.current = active
@@ -482,8 +487,8 @@ export function Feed() {
     if (localLiked.length > 0) setLikedIds(localLiked)
     const controller = new AbortController()
     fetch("/api/auth/me", { signal: controller.signal })
-      .then((response) =>
-        response.json() as Promise<{
+      .then(async (response) => {
+        const data = (await response.json()) as {
           username?: string | null
           vip?: boolean
           vipUntil?: string | null
@@ -495,8 +500,11 @@ export function Feed() {
           freeDailyPics?: number
           savedIds?: string[]
           likedIds?: string[]
-        }>,
-      )
+          kicked?: boolean
+        }
+        noteAuthResponse(response, data)
+        return data
+      })
       .then((data) => {
         const latestLocal = readLocalSaved()
         const latestLiked = readLocalLiked()
@@ -779,9 +787,10 @@ export function Feed() {
 
   useEffect(() => {
     if (!toast) return
+    const hold = Math.max(600, toast.ms)
     const enter = window.requestAnimationFrame(() => setToastOn(true))
-    const fade = window.setTimeout(() => setToastOn(false), 500)
-    const clear = window.setTimeout(() => setToast(null), 680)
+    const fade = window.setTimeout(() => setToastOn(false), hold)
+    const clear = window.setTimeout(() => setToast(null), hold + 180)
     return () => {
       window.cancelAnimationFrame(enter)
       window.clearTimeout(fade)
@@ -789,9 +798,41 @@ export function Feed() {
     }
   }, [toast])
 
-  function showToast(text: string) {
-    setToast({ text, id: Date.now() })
+  function showToast(text: string, ms = 700) {
+    setToast({ text, id: Date.now(), ms })
   }
+
+  function handleSessionKicked() {
+    if (kickedLock.current) return
+    if (!userRef.current) return
+    kickedLock.current = true
+    clearLocalAuthData()
+    setSavedIds([])
+    setLikedIds([])
+    setSavedCatalog([])
+    fetchedSavedRef.current.clear()
+    setUser(null)
+    setProfileOpen(false)
+    setVipOpen(false)
+    if (tabRef.current === "saved") {
+      activeRef.current = forYouIndex.current
+      setTab("forYou")
+      setActive(forYouIndex.current)
+    }
+    showToast("账号已在别处登录", 2400)
+    window.setTimeout(() => {
+      kickedLock.current = false
+    }, 2500)
+  }
+
+  useEffect(() => {
+    function onKicked() {
+      handleSessionKicked()
+    }
+    window.addEventListener(SESSION_KICKED_EVENT, onKicked)
+    return () => window.removeEventListener(SESSION_KICKED_EVENT, onKicked)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable kick handler
+  }, [])
 
   function applyHeaderHidden(hidden: boolean) {
     if (headerHiddenRef.current === hidden) return
@@ -909,8 +950,8 @@ function activeVideo() {
     }
     setUser(next)
     void fetch("/api/auth/me")
-      .then((response) =>
-        response.json() as Promise<{
+      .then(async (response) => {
+        const data = (await response.json()) as {
           vip?: boolean
           vipUntil?: string | null
           inviteCode?: string | null
@@ -919,8 +960,12 @@ function activeVideo() {
           inviteNeed?: number
           savedIds?: string[]
           likedIds?: string[]
-        }>,
-      )
+          kicked?: boolean
+          username?: string | null
+        }
+        noteAuthResponse(response, data)
+        return data
+      })
       .then((data) => {
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []

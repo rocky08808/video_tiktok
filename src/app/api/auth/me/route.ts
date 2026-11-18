@@ -1,13 +1,13 @@
 import { connection } from "next/server"
 import { getAppSettings } from "@/lib/app-settings"
-import { currentUser } from "@/lib/auth"
+import { authSnapshot } from "@/lib/auth"
 import { describeMongoError } from "@/lib/mongo"
 
 export async function GET() {
   await connection()
   try {
     const settings = await getAppSettings()
-    const user = await currentUser()
+    const { user, kicked } = await authSnapshot()
     return Response.json(
       {
         username: user?.username ?? null,
@@ -23,10 +23,14 @@ export async function GET() {
         likedIds: user?.likedIds ?? [],
         savedPicIds: user?.savedPicIds ?? [],
         likedPicIds: user?.likedPicIds ?? [],
+        kicked,
       },
       { headers: { "Cache-Control": "no-store" } },
     )
   } catch (error) {
-    return Response.json({ username: null, error: describeMongoError(error) }, { headers: { "Cache-Control": "no-store" } })
+    return Response.json(
+      { username: null, kicked: false, error: describeMongoError(error) },
+      { headers: { "Cache-Control": "no-store" } },
+    )
   }
 }

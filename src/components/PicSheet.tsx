@@ -5,6 +5,7 @@ import { IconBookmark, IconHeart } from "@/components/icons"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatCount } from "@/lib/format"
 import { freePicLimit, readFreePicPack, writeFreePicPack, type PackedPic } from "@/lib/pic-pack"
+import { noteAuthResponse } from "@/lib/session-client"
 
 const VIP_SESSION_KEY = "sk_pics_vip"
 const LIKED_PIC_KEY = "sk_pic_liked"
@@ -125,6 +126,7 @@ async function pushPicIds(kind: "liked" | "saved", ids: string[]) {
     counts?: Record<string, number>
     error?: string
   }
+  if (noteAuthResponse(response)) throw new Error("请先登录")
   if (!response.ok) throw new Error(data.error || "同步失败")
   return data
 }
@@ -425,14 +427,16 @@ export function PicSheet({
     })
     if (!loggedIn) return
     void fetch("/api/auth/me")
-      .then(
-        (response) =>
-          response.json() as Promise<{
-            username?: string | null
-            likedPicIds?: string[]
-            savedPicIds?: string[]
-          }>,
-      )
+      .then(async (response) => {
+        const data = (await response.json()) as {
+          username?: string | null
+          likedPicIds?: string[]
+          savedPicIds?: string[]
+          kicked?: boolean
+        }
+        noteAuthResponse(response, data)
+        return data
+      })
       .then((data) => {
         if (!data.username) return
         if (Array.isArray(data.likedPicIds)) {
