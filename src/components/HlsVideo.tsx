@@ -29,6 +29,7 @@ export function HlsVideo({
   onError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const playerRef = useRef<Hls | null>(null)
   const nativeRef = useRef(false)
   const activeRef = useRef(active)
   const pausedRef = useRef(paused)
@@ -52,14 +53,13 @@ export function HlsVideo({
     if (!active) setShowPoster(Boolean(poster))
   }, [active, paused, poster, onBuffering, onProgress, onError])
 
-  const playerRef = useRef<Hls | null>(null)
-
   useEffect(() => {
     const video = videoRef.current
     if (!video || !preload) return
 
     let destroyed = false
     nativeRef.current = false
+    onBufferingRef.current(true)
 
     const playIfNeeded = () => {
       if (!video || destroyed) return
@@ -67,9 +67,12 @@ export function HlsVideo({
         video.pause()
         return
       }
-      void video.play().then(() => {
-        if (!activeRef.current || pausedRef.current) video.pause()
-      }).catch(() => {})
+      void video
+        .play()
+        .then(() => {
+          if (!activeRef.current || pausedRef.current) video.pause()
+        })
+        .catch(() => {})
     }
 
     const attach = async () => {
@@ -88,13 +91,11 @@ export function HlsVideo({
 
       let recovered = 0
       const player = new HlsCtor({
-        enableWorker: true,
+        enableWorker: false,
         capLevelToPlayerSize: true,
-        // 预加载条只缓冲短一点，减轻越刷越卡
-        maxBufferLength: activeRef.current ? 10 : 4,
+        maxBufferLength: 8,
         maxMaxBufferLength: 12,
-        backBufferLength: 4,
-        startLevel: -1,
+        backBufferLength: 6,
       })
       playerRef.current = player
       const fail = () => {
@@ -103,6 +104,9 @@ export function HlsVideo({
         onErrorRef.current("视频加载失败")
       }
       player.on(HlsCtor.Events.MANIFEST_PARSED, playIfNeeded)
+      player.on(HlsCtor.Events.FRAG_BUFFERED, () => {
+        if (activeRef.current && video.readyState >= 2) onBufferingRef.current(false)
+      })
       player.on(HlsCtor.Events.ERROR, (_event, data) => {
         if (!data.fatal || playerRef.current !== player) return
         recovered += 1
@@ -116,7 +120,6 @@ export function HlsVideo({
       })
       player.loadSource(src)
       player.attachMedia(video)
-      if (!activeRef.current) player.stopLoad()
     }
 
     void attach()
@@ -140,72 +143,82 @@ export function HlsVideo({
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    const player = playerRef.current
-    if (player) {
-      if (active) player.startLoad()
-      else player.stopLoad()
-    }
     if (active && !paused) {
-      void video.play().then(() => {
-        if (!activeRef.current || pausedRef.current) video.pause()
-      }).catch(() => {})
+      void video
+        .play()
+        .then(() => {
+          if (!activeRef.current || pausedRef.current) video.pause()
+        })
+        .catch(() => {})
       return
     }
     video.pause()
   }, [active, paused, preload])
 
+  function markReady() {
+    const element = videoRef.current
+    if (!element) return
+    if (element.readyState >= 2 || element.videoWidth > 0) {
+      setShowPoster(false)
+      onBufferingRef.current(false)
+    }
+  }
+
   return (
     <>
-    <video
-      ref={(node) => {
-        videoRef.current = node
-        if (node) node.setAttribute("referrerpolicy", "no-referrer")
-      }}
-      className="media-fit absolute top-1/2 left-0 w-full -translate-y-1/2"
-      playsInline
-      loop
-      muted={muted}
-      poster={poster}
-      preload={preload ? "auto" : "none"}
-      disablePictureInPicture
-      onContextMenu={(event) => event.preventDefault()}
-      onPlaying={() => {
-        const element = videoRef.current
-        if (!element?.videoWidth) return
-        setShowPoster(false)
-        onBufferingRef.current(false)
-      }}
-      onWaiting={() => onBufferingRef.current(true)}
-      onCanPlay={() => {
-        if (activeRef.current && !pausedRef.current) {
-          void videoRef.current?.play().catch(() => {})
-        }
-      }}
-      onTimeUpdate={(event) => {
-        const video = event.currentTarget
-        if (video.duration && Number.isFinite(video.duration)) {
-          onProgressRef.current(video.currentTime / video.duration)
-        }
-      }}
-      onEnded={(event) => {
-        const video = event.currentTarget
-        video.currentTime = 0
-        if (activeRef.current && !pausedRef.current) void video.play().catch(() => {})
-      }}
-      onError={() => {
-        if (nativeRef.current) onErrorRef.current("视频加载失败")
-      }}
-    />
-    {poster && showPoster && (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={poster}
-        alt=""
-        referrerPolicy="no-referrer"
-        className="media-fit absolute top-1/2 left-0 z-[2] w-full -translate-y-1/2"
-        onError={() => setShowPoster(false)}
+      <video
+        ref={(node) => {
+          videoRef.current = node
+          if (node) node.setAttribute("referrerpolicy", "no-referrer")
+        }}
+        className="media-fit absolute top-1/2 left-0 w-full -translate-y-1/2"
+        playsInline
+        loop
+        muted={muted}
+        poster={poster}
+        preload={preload ? "auto" : "none"}
+        disablePictureInPicture
+        onContextMenu={(event) => event.preventDefault()}
+        onPlaying={() => {
+          setShowPoster(false)
+          onBufferingRef.current(false)
+        }}
+        onLoadedData={markReady}
+        onCanPlay={() => {
+          markReady()
+          if (activeRef.current && !pausedRef.current) {
+            void videoRef.current?.play().catch(() => {})
+          }
+        }}
+        onWaiting={() => {
+          if (activeRef.current && !pausedRef.current) onBufferingRef.current(true)
+        }}
+        onTimeUpdate={(event) => {
+          const video = event.currentTarget
+          if (video.duration && Number.isFinite(video.duration)) {
+            onProgressRef.current(video.currentTime / video.duration)
+          }
+          if (video.readyState >= 3) onBufferingRef.current(false)
+        }}
+        onEnded={(event) => {
+          const video = event.currentTarget
+          video.currentTime = 0
+          if (activeRef.current && !pausedRef.current) void video.play().catch(() => {})
+        }}
+        onError={() => {
+          if (nativeRef.current) onErrorRef.current("视频加载失败")
+        }}
       />
-    )}
+      {poster && showPoster && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={poster}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="media-fit absolute top-1/2 left-0 z-[2] w-full -translate-y-1/2"
+          onError={() => setShowPoster(false)}
+        />
+      )}
     </>
   )
 }

@@ -460,7 +460,9 @@ export function Feed() {
     })
     root.querySelectorAll<HTMLElement>("[data-index]").forEach((node) => observer.observe(node))
     return () => observer.disconnect()
-  }, [list, active])
+    // active 变化时附近节点会换，需要重新 observe
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- list identity + active window
+  }, [list.length, active, tab])
 
   useEffect(() => {
     const root = scrollerRef.current
