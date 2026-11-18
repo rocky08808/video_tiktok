@@ -56,6 +56,11 @@ export async function getSettingsCollection(): Promise<Collection<Document>> {
   return database.collection("settings")
 }
 
+export async function getRateLimitsCollection(): Promise<Collection<Document>> {
+  const database = await getDb()
+  return database.collection("rate_limits")
+}
+
 export function describeMongoError(error: unknown) {
   const message = error instanceof Error ? error.message : ""
   if (/Authentication failed|auth failed|bad auth/i.test(message)) {
