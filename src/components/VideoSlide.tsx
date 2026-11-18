@@ -249,8 +249,8 @@ export function VideoSlide({
       </div>
 
       {active && (
-        <div className="absolute inset-x-0 bottom-0 z-30 h-4" onPointerDown={seek}>
-          <div className="absolute inset-x-0 bottom-0 h-0.5 bg-white/20">
+        <div className="absolute inset-x-0 bottom-0 z-30 h-6" onPointerDown={seek}>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-white/25">
             <div className="h-full bg-white" style={{ width: `${progress * 100}%` }} />
           </div>
         </div>
