@@ -160,9 +160,6 @@ export function VideoSlide({
         onError={setFailed}
       />
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-32 bg-gradient-to-b from-black/55 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-72 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
-
       <div
         className="absolute inset-0 z-10 touch-manipulation"
         onPointerDown={(event) => {
