@@ -11,9 +11,12 @@ type Props = {
   muted: boolean
   paused: boolean
   epoch: number
+  /** true：单条循环；false：播完回调 onEnded */
+  loopOne?: boolean
   onBuffering: (buffering: boolean) => void
   onProgress: (ratio: number) => void
   onError: (message: string) => void
+  onEnded?: () => void
 }
 
 export function HlsVideo({
@@ -24,9 +27,11 @@ export function HlsVideo({
   muted,
   paused,
   epoch,
+  loopOne = true,
   onBuffering,
   onProgress,
   onError,
+  onEnded,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const playerRef = useRef<Hls | null>(null)
@@ -36,6 +41,8 @@ export function HlsVideo({
   const onBufferingRef = useRef(onBuffering)
   const onProgressRef = useRef(onProgress)
   const onErrorRef = useRef(onError)
+  const onEndedRef = useRef(onEnded)
+  const loopOneRef = useRef(loopOne)
   const playGenRef = useRef(0)
   const playRetryRef = useRef<number | null>(null)
   const [posterKey, setPosterKey] = useState(`${src}:${epoch}`)
@@ -52,8 +59,10 @@ export function HlsVideo({
     onBufferingRef.current = onBuffering
     onProgressRef.current = onProgress
     onErrorRef.current = onError
+    onEndedRef.current = onEnded
+    loopOneRef.current = loopOne
     if (!active) setShowPoster(Boolean(poster))
-  }, [active, paused, poster, onBuffering, onProgress, onError])
+  }, [active, paused, poster, loopOne, onBuffering, onProgress, onError, onEnded])
 
   function clearPlayRetry() {
     if (playRetryRef.current != null) {
@@ -220,7 +229,7 @@ export function HlsVideo({
         }}
         className="media-fit absolute top-1/2 left-0 w-full -translate-y-1/2"
         playsInline
-        loop
+        loop={loopOne}
         muted={muted}
         poster={poster}
         preload={preload ? "auto" : "none"}
@@ -247,8 +256,12 @@ export function HlsVideo({
         }}
         onEnded={(event) => {
           const video = event.currentTarget
-          video.currentTime = 0
-          if (activeRef.current && !pausedRef.current) requestPlay("ended")
+          if (loopOneRef.current) {
+            video.currentTime = 0
+            if (activeRef.current && !pausedRef.current) requestPlay("ended")
+            return
+          }
+          onEndedRef.current?.()
         }}
         onError={() => {
           if (nativeRef.current) onErrorRef.current("视频加载失败")

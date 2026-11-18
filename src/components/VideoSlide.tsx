@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react"
 import { HlsVideo } from "@/components/HlsVideo"
-import { IconBookmark, IconHeart, IconPlay } from "@/components/icons"
+import { IconBookmark, IconHeart, IconLoopMode, IconPlay } from "@/components/icons"
 import { formatCount } from "@/lib/format"
 import type { VideoItem } from "@/lib/types"
 
@@ -15,9 +15,13 @@ type Props = {
   paused: boolean
   saved: boolean
   liked: boolean
+  loopOne: boolean
+  chromeHidden?: boolean
   onPausedChange: (paused: boolean) => void
   onToggleSaved: () => void
   onToggleLike: () => void
+  onToggleLoop: () => void
+  onEnded: () => void
 }
 
 export function VideoSlide({
@@ -29,9 +33,13 @@ export function VideoSlide({
   paused,
   saved,
   liked,
+  loopOne,
+  chromeHidden = false,
   onPausedChange,
   onToggleSaved,
   onToggleLike,
+  onToggleLoop,
+  onEnded,
 }: Props) {
   const rootRef = useRef<HTMLElement>(null)
   const startRef = useRef<{ x: number; y: number } | null>(null)
@@ -62,6 +70,18 @@ export function VideoSlide({
     // 仅切到新条目时亮 loading；pause/resume 交给 HlsVideo，避免和 play 成功抢状态
     if (active && !paused && !failed) setBuffering(true)
   }, [active, failed, video.src])
+
+  // 点赞/收藏：切到本条 / 开始播放时出现，真正播起来后再停 3 秒隐藏
+  const [engageHidden, setEngageHidden] = useState(false)
+  useEffect(() => {
+    if (!active || paused || failed || buffering) {
+      setEngageHidden(false)
+      return
+    }
+    setEngageHidden(false)
+    const timer = window.setTimeout(() => setEngageHidden(true), 3000)
+    return () => window.clearTimeout(timer)
+  }, [active, paused, failed, buffering, video.src])
 
   function media() {
     return rootRef.current?.querySelector("video") ?? null
@@ -167,9 +187,11 @@ export function VideoSlide({
         muted={muted}
         paused={!active || paused}
         epoch={epoch}
+        loopOne={loopOne}
         onBuffering={setBuffering}
         onProgress={setProgress}
         onError={setFailed}
+        onEnded={onEnded}
       />
 
       <div
@@ -249,17 +271,47 @@ export function VideoSlide({
         </div>
 
         <div className="pointer-events-auto flex flex-col items-center gap-4 pb-1">
-          <RailButton label="点赞" count={video.likes} pressed={liked} onClick={toggleLike}>
-            <IconHeart filled={liked} />
-          </RailButton>
-          <RailButton
-            label="收藏"
-            count={video.bookmarks}
-            pressed={saved}
-            onClick={onToggleSaved}
+          <div
+            className={`feed-profile flex flex-col items-center gap-4 ${
+              engageHidden ? "pointer-events-none" : ""
+            }`}
+            data-hidden={engageHidden ? "true" : "false"}
+            style={{
+              opacity: engageHidden ? 0 : 1,
+              transform: engageHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+            aria-hidden={engageHidden}
           >
-            <IconBookmark filled={saved} />
-          </RailButton>
+            <RailButton label="点赞" count={video.likes} pressed={liked} onClick={toggleLike}>
+              <IconHeart filled={liked} />
+            </RailButton>
+            <RailButton
+              label="收藏"
+              count={video.bookmarks}
+              pressed={saved}
+              onClick={onToggleSaved}
+            >
+              <IconBookmark filled={saved} />
+            </RailButton>
+          </div>
+          <div
+            className={`feed-profile ${chromeHidden ? "pointer-events-none" : ""}`}
+            data-hidden={chromeHidden ? "true" : "false"}
+            style={{
+              opacity: chromeHidden ? 0 : 1,
+              transform: chromeHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+            aria-hidden={chromeHidden}
+          >
+            <RailButton
+              label={loopOne ? "循环" : "连播"}
+              pressed={loopOne}
+              onClick={onToggleLoop}
+            >
+              <IconLoopMode loopOne={loopOne} />
+            </RailButton>
+          </div>
+          {/* 给右下角个人中心头像留空，避免挡住循环按钮 */}
           <div className="mt-1 h-11 w-11" aria-hidden />
         </div>
       </div>
@@ -283,7 +335,7 @@ function RailButton({
   children,
 }: {
   label: string
-  count: number
+  count?: number
   pressed?: boolean
   onClick: () => void
   children: ReactNode
@@ -291,7 +343,9 @@ function RailButton({
   return (
     <button type="button" className="flex flex-col items-center gap-1" aria-label={label} aria-pressed={pressed} onClick={onClick}>
       <span className="drop-shadow-[0_2px_4px_rgba(0,0,0,.55)]">{children}</span>
-      <span className="text-shadow text-[12px] font-semibold">{formatCount(count)}</span>
+      <span className={`text-shadow text-[12px] font-semibold ${pressed ? "text-[#25f4ee]" : ""}`}>
+        {typeof count === "number" ? formatCount(count) : label}
+      </span>
     </button>
   )
 }

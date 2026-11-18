@@ -24,6 +24,8 @@ type Tab = "forYou" | "saved"
 
 const SAVED_KEY = "sk_saved"
 const LIKED_KEY = "sk_liked"
+const LOOP_KEY = "sk_loop_one"
+const VIDEO_SEEN_KEY = "sk_video_seen"
 const VIDEO_PAGE_SIZE = 40
 /** 与服务端一致：一轮内尽量排除整库已看过的 */
 const VIDEO_EXCLUDE_MAX = 50_000
@@ -41,6 +43,27 @@ function rememberSeen(seen: string[], ids: string[]) {
   }
   if (next.length > VIDEO_EXCLUDE_MAX) next.splice(0, next.length - VIDEO_EXCLUDE_MAX)
   return next
+}
+
+function readVideoSeen() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(VIDEO_SEEN_KEY) || "[]") as unknown
+    if (!Array.isArray(parsed)) return []
+    return rememberSeen(
+      [],
+      parsed.filter((id): id is string => typeof id === "string" && id.length > 0),
+    )
+  } catch {
+    return []
+  }
+}
+
+function writeVideoSeen(ids: string[]) {
+  try {
+    localStorage.setItem(VIDEO_SEEN_KEY, JSON.stringify(ids.slice(-VIDEO_EXCLUDE_MAX)))
+  } catch {
+    // quota / private mode
+  }
 }
 
 function mergeVideoPages(current: VideoItem[], incoming: VideoItem[], allowRepeat: boolean) {
@@ -192,6 +215,7 @@ export function Feed() {
   const [limits, setLimits] = useState(DEFAULT_APP_SETTINGS)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [loopOne, setLoopOne] = useState(true)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
   const picsRef = useRef(false)
@@ -343,18 +367,45 @@ export function Feed() {
     setLoading(true)
     void (async () => {
       try {
-        const [settings, response] = await Promise.all([
+        // 刷新 / 关标签后仍保留本轮已滑过的，避免重复
+        const stored = readVideoSeen()
+        seenIdsRef.current = stored
+        const exclude = stored.slice(0, VIDEO_EXCLUDE_MAX)
+
+        const fetchFirst = async (ex: string[]) => {
+          if (ex.length === 0) {
+            return fetch(`/api/videos?limit=${VIDEO_PAGE_SIZE}`, { signal: controller.signal })
+          }
+          // exclude 可能很大，走 POST
+          return fetch("/api/videos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ limit: VIDEO_PAGE_SIZE, exclude: ex }),
+            signal: controller.signal,
+          })
+        }
+
+        const [settings, firstResponse] = await Promise.all([
           fetchClientSettings(),
-          fetch(`/api/videos?limit=${VIDEO_PAGE_SIZE}`, { signal: controller.signal }),
+          fetchFirst(exclude),
         ])
         if (!alive) return
         setLimits({ ...settings })
-        const data = (await response.json()) as VideosPageResponse
+        let data = (await firstResponse.json()) as VideosPageResponse
         if (!alive) return
-        const page = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
+        let page = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
+
+        // 本地已记满一轮且库里抽空 → 开新一轮
+        if (page.length === 0 && exclude.length > 0) {
+          seenIdsRef.current = []
+          writeVideoSeen([])
+          const again = await fetchFirst([])
+          if (!alive) return
+          data = (await again.json()) as VideosPageResponse
+          page = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
+        }
+
         ensureFreePackIds(page.map((video) => video.id))
-        // exclude 只记滑到过的；首包先清空，落到当前条再记
-        seenIdsRef.current = []
         hasMoreRef.current = data.hasMore !== false && page.length >= VIDEO_PAGE_SIZE
         setHasMore(hasMoreRef.current)
         setVideos(page)
@@ -406,6 +457,7 @@ export function Feed() {
         // 本轮已看完整个库 → 清空 exclude，开新一轮（此后才允许重复）
         if (page.length === 0 && exclude.length > 0) {
           seenIdsRef.current = []
+          writeVideoSeen([])
           allowRepeat = true
           data = await fetchPage([])
           if (!alive) return
@@ -440,7 +492,9 @@ export function Feed() {
     if (tab !== "forYou") return
     const id = list[active]?.id
     if (!id) return
-    seenIdsRef.current = rememberSeen(seenIdsRef.current, [id])
+    const next = rememberSeen(seenIdsRef.current, [id])
+    seenIdsRef.current = next
+    writeVideoSeen(next)
   }, [tab, active, list])
 
   useEffect(() => {
@@ -884,6 +938,44 @@ function activeVideo() {
     setPaused(nextPaused)
   }
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOOP_KEY)
+      if (raw === "0") setLoopOne(false)
+      else if (raw === "1") setLoopOne(true)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  function toggleLoopOne() {
+    setLoopOne((current) => {
+      const next = !current
+      try {
+        localStorage.setItem(LOOP_KEY, next ? "1" : "0")
+      } catch {
+        // ignore
+      }
+      showToast(next ? "单条循环" : "播完下一条")
+      return next
+    })
+  }
+
+  function goNextOnEnded() {
+    const root = scrollerRef.current
+    if (!root || listRef.current.length === 0 || root.clientHeight === 0) return
+    const current = activeRef.current
+    const next = Math.min(listRef.current.length - 1, current + 1)
+    if (next === current) return
+    if (!allowIndex(next)) {
+      setVipOpen(true)
+      return
+    }
+    applyHeaderHidden(true)
+    setPaused(false)
+    root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
+  }
+
   function changeCount(id: string, field: "likes" | "bookmarks", delta: number) {
     const patch = (current: VideoItem[]) =>
       current.map((video) => {
@@ -1184,9 +1276,13 @@ function activeVideo() {
                         paused={paused || watchBlocked || limitBlocked}
                         saved={savedIds.includes(video.id)}
                         liked={likedIds.includes(video.id)}
+                        loopOne={loopOne}
+                        chromeHidden={chromeHidden}
                         onPausedChange={setPlayback}
                         onToggleSaved={() => toggleSaved(video.id)}
                         onToggleLike={() => toggleLike(video.id)}
+                        onToggleLoop={toggleLoopOne}
+                        onEnded={goNextOnEnded}
                       />
                     )
                   })}

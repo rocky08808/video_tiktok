@@ -10,6 +10,7 @@ import { noteAuthResponse } from "@/lib/session-client"
 const VIP_SESSION_KEY = "sk_pics_vip"
 const LIKED_PIC_KEY = "sk_pic_liked"
 const SAVED_PIC_KEY = "sk_pic_saved"
+const PIC_SEEN_KEY = "sk_pic_seen"
 const PIC_PAGE_SIZE = 40
 const PIC_EXCLUDE_MAX = 50_000
 const LOAD_MORE_REMAINING = 8
@@ -40,6 +41,37 @@ function rememberSeen(seen: string[], ids: string[]) {
     next.push(id)
   }
   if (next.length > PIC_EXCLUDE_MAX) next.splice(0, next.length - PIC_EXCLUDE_MAX)
+  return next
+}
+
+function readPicSeen() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PIC_SEEN_KEY) || "[]") as unknown
+    if (!Array.isArray(parsed)) return []
+    return rememberSeen(
+      [],
+      parsed.filter((id): id is string => typeof id === "string" && id.length > 0),
+    )
+  } catch {
+    return []
+  }
+}
+
+function writePicSeen(ids: string[]) {
+  try {
+    localStorage.setItem(PIC_SEEN_KEY, JSON.stringify(ids.slice(-PIC_EXCLUDE_MAX)))
+  } catch {
+    // quota / private mode
+  }
+}
+
+/** 优先 localStorage；旧 session 有记录时回填一次 */
+function hydratePicSeen(fallback?: string[]) {
+  const stored = readPicSeen()
+  if (stored.length > 0) return stored
+  if (!fallback || fallback.length === 0) return []
+  const next = rememberSeen([], fallback)
+  writePicSeen(next)
   return next
 }
 
@@ -201,6 +233,7 @@ export function PicSheet({
     if (seenIds) seenIdsRef.current = rememberSeen([], seenIds)
     const currentId = normalized[safeIndex]?.id
     if (currentId) seenIdsRef.current = rememberSeen(seenIdsRef.current, [currentId])
+    if (vip) writePicSeen(seenIdsRef.current)
     setLimited(nextLimited)
     setPics(normalized)
     setIndex(safeIndex)
@@ -321,7 +354,7 @@ export function PicSheet({
         const cached = readVipSession()
         if (cached) {
           setError(null)
-          seenIdsRef.current = rememberSeen([], cached.seenIds ?? cached.pics.map((pic) => pic.id))
+          seenIdsRef.current = hydratePicSeen(cached.seenIds ?? cached.pics.map((pic) => pic.id))
           hasMoreRef.current = true
           setHasMore(true)
           applyPics(cached.pics, cached.index, false, seenIdsRef.current)
@@ -361,14 +394,16 @@ export function PicSheet({
         return (await response.json()) as PicsPageResponse
       }
 
-      let exclude = force && vip ? seenIdsRef.current.slice(0, PIC_EXCLUDE_MAX) : []
+      if (vip) seenIdsRef.current = hydratePicSeen(seenIdsRef.current)
+      let exclude = vip ? seenIdsRef.current.slice(0, PIC_EXCLUDE_MAX) : []
       let data = await fetchPage(exclude)
       if (id !== requestId.current) return
       let next = Array.isArray(data.pics) ? data.pics : []
 
-      // 换一批时本轮已空 → 开新一轮
-      if (force && vip && next.length === 0 && exclude.length > 0) {
+      // 本轮已空 → 开新一轮（刷新 / 换一批同理）
+      if (vip && next.length === 0 && exclude.length > 0) {
         seenIdsRef.current = []
+        writePicSeen([])
         exclude = []
         data = await fetchPage([])
         if (id !== requestId.current) return
@@ -388,7 +423,8 @@ export function PicSheet({
         setHasMore(false)
         return
       }
-      if (!force) seenIdsRef.current = []
+      // 非 VIP 当天固定包不沿用 exclude；VIP 保留 localStorage 本轮记录
+      if (!force && !vip) seenIdsRef.current = []
       // 非 VIP 当天固定；VIP 保持可继续滑；exclude 只在滑到当前张时记
       hasMoreRef.current = vip
       setHasMore(vip)
@@ -522,6 +558,7 @@ export function PicSheet({
         // 本轮已看完整个库 → 开新一轮
         if (page.length === 0 && exclude.length > 0) {
           seenIdsRef.current = []
+          writePicSeen([])
           allowRepeat = true
           data = await fetchPage([])
           if (!alive) return
@@ -558,9 +595,11 @@ export function PicSheet({
     if (!open || browsingSaved) return
     const id = pics[index]?.id
     if (!id) return
-    seenIdsRef.current = rememberSeen(seenIdsRef.current, [id])
+    const next = rememberSeen(seenIdsRef.current, [id])
+    seenIdsRef.current = next
+    if (vip) writePicSeen(next)
     persist(pics, index)
-  }, [open, browsingSaved, index, pics])
+  }, [open, browsingSaved, index, pics, vip])
 
   function onScroll() {
     const root = scrollerRef.current

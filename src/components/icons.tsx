@@ -123,6 +123,36 @@ export function IconPlay({ className = "h-8 w-8" }: IconProps) {
   )
 }
 
+/** loopOne：单条循环；否则表示连播下一条 */
+export function IconLoopMode({ loopOne, className = "h-8 w-8" }: IconProps & { loopOne?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none">
+      {loopOne ? (
+        <>
+          <path
+            d="M7.2 7.2a6.2 6.2 0 0 1 9.9.4M16.8 16.8a6.2 6.2 0 0 1-9.9-.4"
+            stroke="#fff"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          />
+          <path d="M17.8 4.8v4.2h-4.2M6.2 19.2v-4.2h4.2" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="12" cy="12" r="1.5" fill="#25f4ee" />
+        </>
+      ) : (
+        <>
+          <path
+            d="M5.5 8.5h9.2a3.2 3.2 0 0 1 0 6.4H8"
+            stroke="#fff"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          />
+          <path d="M8.2 5.8 5.2 8.5l3 2.7M14.5 18.2l3-2.7-3-2.7" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+    </svg>
+  )
+}
+
 export function IconUser({ className = "h-6 w-6" }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none">
