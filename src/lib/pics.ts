@@ -9,14 +9,19 @@ export type PicItem = {
   id: string
   name: string
   src: string
+  likes: number
+  bookmarks: number
 }
 
 type RawPic = {
   _id?: { toString(): string }
+  id?: unknown
   name?: unknown
   pic?: unknown
   src?: unknown
   url?: unknown
+  likes?: unknown
+  bookmarks?: unknown
 }
 
 function shuffle<T>(items: T[]) {
@@ -28,6 +33,11 @@ function shuffle<T>(items: T[]) {
   return next
 }
 
+function countOf(value: unknown) {
+  const n = Number(value)
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0
+}
+
 function mapPic(doc: RawPic, base: string): PicItem | null {
   const path =
     (typeof doc.pic === "string" && doc.pic) ||
@@ -37,8 +47,17 @@ function mapPic(doc: RawPic, base: string): PicItem | null {
   const absolute = resolveSrc(path, base)
   if (!absolute) return null
   const name = typeof doc.name === "string" && doc.name ? doc.name : "美图"
-  const id = doc._id ? String(doc._id) : absolute
-  return { id, name, src: absolute }
+  const id =
+    (typeof doc.id === "string" && doc.id) ||
+    (typeof doc.name === "string" && doc.name) ||
+    (doc._id ? String(doc._id) : absolute)
+  return {
+    id,
+    name,
+    src: absolute,
+    likes: countOf(doc.likes),
+    bookmarks: countOf(doc.bookmarks),
+  }
 }
 
 export async function getRandomPics(vip: boolean) {

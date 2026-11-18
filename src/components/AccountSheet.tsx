@@ -198,12 +198,19 @@ export function AccountSheet({
                 <div>
                   <p className="text-[15px] font-semibold text-white">邀请好友</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-white/45">
-                    满 {inviteNeed} 位好友开通 VIP，你免费升级
+                    {user.vip
+                      ? "分享邀请码，让好友也来看精彩内容"
+                      : `满 ${inviteNeed} 位好友开通 VIP，你免费升级`}
                   </p>
                 </div>
-                {inviteVipCount >= inviteNeed && (
+                {!user.vip && inviteVipCount >= inviteNeed && (
                   <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
                     已达成
+                  </span>
+                )}
+                {user.vip && (
+                  <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
+                    已是 VIP
                   </span>
                 )}
               </div>
@@ -217,27 +224,32 @@ export function AccountSheet({
                   </p>
                 </div>
                 <div className="rounded-xl bg-black/25 px-3 py-3">
-                  <p className="text-[11px] text-white/40">已成 VIP</p>
+                  <p className="text-[11px] text-white/40">{user.vip ? "好友 VIP" : "已成 VIP"}</p>
                   <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
                     {inviteVipCount}
-                    <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
+                    {!user.vip && (
+                      <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
+                    )}
+                    {user.vip && <span className="ml-1 text-[12px] font-medium text-white/35">人</span>}
                   </p>
                 </div>
               </div>
 
-              <div className="relative mt-3.5">
-                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
-                    style={{ width: `${inviteProgress * 100}%` }}
-                  />
+              {!user.vip && (
+                <div className="relative mt-3.5">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
+                      style={{ width: `${inviteProgress * 100}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] text-white/35">
+                    {inviteVipCount >= inviteNeed
+                      ? "邀请奖励已解锁"
+                      : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`}
+                  </p>
                 </div>
-                <p className="mt-2 text-[11px] text-white/35">
-                  {inviteVipCount >= inviteNeed
-                    ? "邀请奖励已解锁"
-                    : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`}
-                </p>
-              </div>
+              )}
 
               {user.inviteCode && (
                 <div className="relative mt-4 flex items-center gap-2 rounded-xl bg-black/30 p-1.5 pl-3">

@@ -917,7 +917,7 @@ function activeVideo() {
             onClick={() => setPicsOpen(true)}
           >
             {picThumb ? (
-              <img src={picThumb} alt="" className="h-full w-full object-cover" />
+              <img src={picThumb} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
             ) : (
               <span className="grid h-full w-full place-items-center bg-gradient-to-br from-[#fe2c55]/80 to-[#25f4ee]/70 text-[10px] font-semibold tracking-wide">
                 美图
@@ -1018,8 +1018,10 @@ function activeVideo() {
         <PicSheet
           open={picsOpen}
           vip={user?.vip === true}
+          loggedIn={Boolean(user)}
           onClose={() => setPicsOpen(false)}
           onOpenVip={goVip}
+          onOpenLogin={() => setProfileOpen(true)}
         />
         <div inert={!vipOpen} className={`absolute inset-0 z-40 ${vipOpen ? "" : "pointer-events-none"}`}>
           <button

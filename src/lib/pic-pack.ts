@@ -4,6 +4,8 @@ export type PackedPic = {
   id: string
   name: string
   src: string
+  likes?: number
+  bookmarks?: number
 }
 
 type PackCache = {

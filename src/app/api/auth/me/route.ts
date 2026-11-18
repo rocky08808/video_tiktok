@@ -20,6 +20,8 @@ export async function GET() {
         freeDailyPics: user?.freeDailyPics ?? settings.freeDailyPics,
         savedIds: user?.savedIds ?? [],
         likedIds: user?.likedIds ?? [],
+        savedPicIds: user?.savedPicIds ?? [],
+        likedPicIds: user?.likedPicIds ?? [],
       },
       { headers: { "Cache-Control": "no-store" } },
     )

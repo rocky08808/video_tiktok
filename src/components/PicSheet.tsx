@@ -1,29 +1,60 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { IconBookmark, IconHeart } from "@/components/icons"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { formatCount } from "@/lib/format"
 import { freePicLimit, readFreePicPack, writeFreePicPack, type PackedPic } from "@/lib/pic-pack"
 
 const VIP_SESSION_KEY = "sk_pics_vip"
+const LIKED_PIC_KEY = "sk_pic_liked"
+const SAVED_PIC_KEY = "sk_pic_saved"
 
-type PicItem = PackedPic
+type PicItem = PackedPic & { likes: number; bookmarks: number }
 
 type VipSessionCache = {
   pics: PicItem[]
   index: number
 }
 
+function normalizePic(item: PackedPic): PicItem {
+  return {
+    ...item,
+    likes: Math.max(0, Math.round(Number(item.likes) || 0)),
+    bookmarks: Math.max(0, Math.round(Number(item.bookmarks) || 0)),
+  }
+}
+
+function readLocalIds(key: string) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]") as unknown
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []
+  } catch {
+    return []
+  }
+}
+
+function writeLocalIds(key: string, ids: string[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(ids))
+  } catch {
+    // ignore
+  }
+}
+
 function readVipSession(): VipSessionCache | null {
   try {
     const parsed = JSON.parse(sessionStorage.getItem(VIP_SESSION_KEY) || "null") as VipSessionCache | null
     if (!parsed || !Array.isArray(parsed.pics) || parsed.pics.length === 0) return null
-    const pics = parsed.pics.filter(
-      (item): item is PicItem =>
-        !!item &&
-        typeof item.id === "string" &&
-        typeof item.name === "string" &&
-        typeof item.src === "string",
-    )
+    const pics = parsed.pics
+      .filter(
+        (item) =>
+          !!item &&
+          typeof item.id === "string" &&
+          typeof item.name === "string" &&
+          typeof item.src === "string",
+      )
+      .map(normalizePic)
     if (pics.length === 0) return null
     const index = Math.min(pics.length - 1, Math.max(0, Number(parsed.index) || 0))
     return { pics, index }
@@ -44,43 +75,88 @@ function writeVipSession(pics: PicItem[], index: number) {
   }
 }
 
+async function pushPicIds(kind: "liked" | "saved", ids: string[]) {
+  const response = await fetch(kind === "liked" ? "/api/auth/pic-likes" : "/api/auth/pic-saved", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(kind === "liked" ? { likedPicIds: ids } : { savedPicIds: ids }),
+  })
+  const data = (await response.json()) as {
+    likedPicIds?: string[]
+    savedPicIds?: string[]
+    counts?: Record<string, number>
+    error?: string
+  }
+  if (!response.ok) throw new Error(data.error || "同步失败")
+  return data
+}
+
 export function PicSheet({
   open,
   vip,
+  loggedIn,
   onClose,
   onOpenVip,
+  onOpenLogin,
 }: {
   open: boolean
   vip: boolean
+  loggedIn: boolean
   onClose: () => void
   onOpenVip: () => void
+  onOpenLogin: () => void
 }) {
   const [pics, setPics] = useState<PicItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [limited, setLimited] = useState(!vip)
+  const [likedIds, setLikedIds] = useState<string[]>([])
+  const [savedIds, setSavedIds] = useState<string[]>([])
+  const [headerHidden, setHeaderHidden] = useState(false)
   const [touchY, setTouchY] = useState<number | null>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const indexRef = useRef(0)
+  const headerHiddenRef = useRef(false)
   const requestId = useRef(0)
   const restorePending = useRef(false)
+  const likedSeq = useRef(0)
+  const savedSeq = useRef(0)
+  const suppressTap = useRef(false)
 
   indexRef.current = index
+  const current = pics[index] ?? null
+  const liked = current ? likedIds.includes(current.id) : false
+  const saved = current ? savedIds.includes(current.id) : false
+
+  function applyHeaderHidden(hidden: boolean) {
+    if (headerHiddenRef.current === hidden) return
+    headerHiddenRef.current = hidden
+    setHeaderHidden(hidden)
+  }
 
   function persist(next: PicItem[], nextIndex: number) {
     if (vip) writeVipSession(next, nextIndex)
     else writeFreePicPack(next, nextIndex)
   }
 
-  function applyPics(next: PicItem[], nextIndex: number, nextLimited: boolean) {
-    const safeIndex = Math.min(next.length - 1, Math.max(0, nextIndex))
+  function applyPics(next: PackedPic[], nextIndex: number, nextLimited: boolean) {
+    const normalized = next.map(normalizePic)
+    const safeIndex = Math.min(normalized.length - 1, Math.max(0, nextIndex))
     setLimited(nextLimited)
-    setPics(next)
+    setPics(normalized)
     setIndex(safeIndex)
     indexRef.current = safeIndex
-    persist(next, safeIndex)
+    persist(normalized, safeIndex)
     restorePending.current = true
+  }
+
+  function bumpCount(id: string, field: "likes" | "bookmarks", delta: number) {
+    setPics((currentList) =>
+      currentList.map((pic) =>
+        pic.id === id ? { ...pic, [field]: Math.max(0, pic[field] + delta) } : pic,
+      ),
+    )
   }
 
   async function loadPics(force: boolean) {
@@ -110,7 +186,7 @@ export function PicSheet({
     try {
       const response = await fetch("/api/pics")
       const data = (await response.json()) as {
-        pics?: PicItem[]
+        pics?: PackedPic[]
         limited?: boolean
         error?: string
       }
@@ -127,7 +203,7 @@ export function PicSheet({
         setPics([])
         return
       }
-      applyPics(next, force ? 0 : 0, nextLimited)
+      applyPics(next, 0, nextLimited)
     } catch {
       if (id !== requestId.current) return
       setError("网络不好，稍后再试")
@@ -137,10 +213,37 @@ export function PicSheet({
   }
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      applyHeaderHidden(false)
+      return
+    }
+    applyHeaderHidden(false)
+    setLikedIds(readLocalIds(LIKED_PIC_KEY))
+    setSavedIds(readLocalIds(SAVED_PIC_KEY))
     void fetchClientSettings().then(() => {
       void loadPics(false)
     })
+    void fetch("/api/auth/me")
+      .then(
+        (response) =>
+          response.json() as Promise<{
+            username?: string | null
+            likedPicIds?: string[]
+            savedPicIds?: string[]
+          }>,
+      )
+      .then((data) => {
+        if (!data.username) return
+        if (Array.isArray(data.likedPicIds)) {
+          setLikedIds(data.likedPicIds)
+          writeLocalIds(LIKED_PIC_KEY, data.likedPicIds)
+        }
+        if (Array.isArray(data.savedPicIds)) {
+          setSavedIds(data.savedPicIds)
+          writeLocalIds(SAVED_PIC_KEY, data.savedPicIds)
+        }
+      })
+      .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload when sheet opens or vip flips
   }, [open, vip])
 
@@ -158,9 +261,86 @@ export function PicSheet({
     if (!root || root.clientHeight === 0 || pics.length === 0) return
     const next = Math.min(pics.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
     if (next === indexRef.current) return
+    applyHeaderHidden(next > indexRef.current)
     indexRef.current = next
     setIndex(next)
     persist(pics, next)
+  }
+
+  function toggleLike() {
+    if (!current) return
+    if (!loggedIn) {
+      onOpenLogin()
+      return
+    }
+    const adding = !likedIds.includes(current.id)
+    const next = adding
+      ? [current.id, ...likedIds.filter((id) => id !== current.id)]
+      : likedIds.filter((id) => id !== current.id)
+    const seq = ++likedSeq.current
+    setLikedIds(next)
+    writeLocalIds(LIKED_PIC_KEY, next)
+    bumpCount(current.id, "likes", adding ? 1 : -1)
+    void pushPicIds("liked", next)
+      .then((data) => {
+        if (seq !== likedSeq.current) return
+        if (Array.isArray(data.likedPicIds)) {
+          setLikedIds(data.likedPicIds)
+          writeLocalIds(LIKED_PIC_KEY, data.likedPicIds)
+        }
+        const count = data.counts?.[current.id]
+        if (typeof count !== "number") return
+        setPics((list) =>
+          list.map((pic) => {
+            if (pic.id !== current.id) return pic
+            // 避免服务端偶发 0 把乐观更新盖掉
+            if (adding && count < pic.likes) return pic
+            return { ...pic, likes: count }
+          }),
+        )
+      })
+      .catch(() => {})
+  }
+
+  function toggleSaved() {
+    if (!current) return
+    if (!loggedIn) {
+      onOpenLogin()
+      return
+    }
+    if (!vip) {
+      onOpenVip()
+      return
+    }
+    const adding = !savedIds.includes(current.id)
+    const next = adding
+      ? [current.id, ...savedIds.filter((id) => id !== current.id)]
+      : savedIds.filter((id) => id !== current.id)
+    const seq = ++savedSeq.current
+    setSavedIds(next)
+    writeLocalIds(SAVED_PIC_KEY, next)
+    bumpCount(current.id, "bookmarks", adding ? 1 : -1)
+    void pushPicIds("saved", next)
+      .then((data) => {
+        if (seq !== savedSeq.current) return
+        if (Array.isArray(data.savedPicIds)) {
+          setSavedIds(data.savedPicIds)
+          writeLocalIds(SAVED_PIC_KEY, data.savedPicIds)
+        }
+        const count = data.counts?.[current.id]
+        if (typeof count !== "number") return
+        setPics((list) =>
+          list.map((pic) => {
+            if (pic.id !== current.id) return pic
+            if (adding && count < pic.bookmarks) return pic
+            return { ...pic, bookmarks: count }
+          }),
+        )
+      })
+      .catch((reason: unknown) => {
+        const message = reason instanceof Error ? reason.message : ""
+        if (message.includes("VIP")) onOpenVip()
+      })
   }
 
   return (
@@ -176,7 +356,14 @@ export function PicSheet({
         }`}
         aria-hidden={!open}
       >
-        <header className="relative z-10 flex shrink-0 items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))]">
+        <header
+          className="feed-header absolute inset-x-0 top-0 z-30 flex items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))] pb-2"
+          data-hidden={headerHidden ? "true" : "false"}
+          style={{
+            opacity: headerHidden ? 0 : 1,
+            transform: headerHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
+          }}
+        >
           <button
             type="button"
             className="grid h-10 w-10 place-items-center text-xl text-white/80"
@@ -199,7 +386,7 @@ export function PicSheet({
             <button
               type="button"
               className="h-10 rounded-full px-2 text-[13px] text-white/70 disabled:opacity-40"
-              disabled={loading}
+              disabled={loading || headerHidden}
               onClick={() => void loadPics(true)}
             >
               换一批
@@ -220,7 +407,12 @@ export function PicSheet({
             setTouchY(null)
             if (endY == null) return
             const delta = touchY - endY
-            if (Math.abs(delta) < 48) return
+            if (Math.abs(delta) < 48) {
+              applyHeaderHidden(false)
+              return
+            }
+            suppressTap.current = true
+            applyHeaderHidden(delta > 0)
             const root = scrollerRef.current
             if (!root || root.clientHeight === 0) return
             const next = Math.min(pics.length - 1, Math.max(0, index + (delta > 0 ? 1 : -1)))
@@ -242,18 +434,50 @@ export function PicSheet({
             pics.map((pic) => (
               <article
                 key={pic.id}
-                className="relative flex h-full w-full snap-start snap-always items-center justify-center px-3 py-4"
+                className="relative flex h-full w-full snap-start snap-always items-center justify-center"
               >
                 <img
                   src={pic.src}
                   alt={pic.name}
-                  className="max-h-full max-w-full rounded-2xl object-contain shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+                  referrerPolicy="no-referrer"
+                  className="block h-auto w-full"
                   draggable={false}
+                  onClick={() => {
+                    if (suppressTap.current) {
+                      suppressTap.current = false
+                      return
+                    }
+                    applyHeaderHidden(false)
+                  }}
                 />
               </article>
             ))
           )}
         </div>
+
+        {current && (
+          <div
+            className="feed-profile pointer-events-none absolute inset-y-0 right-3 z-20 flex items-center"
+            data-hidden={headerHidden ? "true" : "false"}
+            style={{
+              opacity: headerHidden ? 0 : 1,
+              transform: headerHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+          >
+            <div
+              className={`flex flex-col items-center gap-4 pb-8 ${
+                headerHidden ? "pointer-events-none" : "pointer-events-auto"
+              }`}
+            >
+              <RailButton label="点赞" count={current.likes} pressed={liked} onClick={toggleLike}>
+                <IconHeart filled={liked} />
+              </RailButton>
+              <RailButton label="收藏" count={current.bookmarks} pressed={saved} onClick={toggleSaved}>
+                <IconBookmark filled={saved} />
+              </RailButton>
+            </div>
+          </div>
+        )}
 
         {limited && (
           <div className="relative z-10 shrink-0 border-t border-white/10 bg-[#141018]/95 px-5 pt-3 pb-[max(14px,env(safe-area-inset-bottom))] backdrop-blur">
@@ -271,5 +495,32 @@ export function PicSheet({
         )}
       </section>
     </div>
+  )
+}
+
+function RailButton({
+  label,
+  count,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string
+  count: number
+  pressed?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      className="flex flex-col items-center gap-1"
+      aria-label={label}
+      aria-pressed={pressed}
+      onClick={onClick}
+    >
+      <span className="drop-shadow-[0_2px_4px_rgba(0,0,0,.55)]">{children}</span>
+      <span className="text-shadow text-[12px] font-semibold">{formatCount(count)}</span>
+    </button>
   )
 }

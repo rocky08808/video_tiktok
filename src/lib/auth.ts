@@ -1,7 +1,14 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto"
 import { promisify } from "node:util"
+import { ObjectId } from "mongodb"
 import { cookies } from "next/headers"
-import { getSessionsCollection, getUsersCollection, getVideoCollection, getVipOrdersCollection } from "@/lib/mongo"
+import {
+  getPicsCollection,
+  getSessionsCollection,
+  getUsersCollection,
+  getVideoCollection,
+  getVipOrdersCollection,
+} from "@/lib/mongo"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
 import { getAppSettings } from "@/lib/app-settings"
 import {
@@ -176,6 +183,8 @@ export async function currentUser() {
     freeDailyPics: settings.freeDailyPics,
     savedIds: readSavedIds(doc?.savedIds),
     likedIds: readSavedIds(doc?.likedIds),
+    savedPicIds: readSavedIds(doc?.savedPicIds),
+    likedPicIds: readSavedIds(doc?.likedPicIds),
   }
 }
 
@@ -364,7 +373,7 @@ export async function confirmVipPayment(username: string) {
   return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId, orderId: String(order._id) }
 }
 
-type IdField = "likedIds" | "savedIds"
+type IdField = "likedIds" | "savedIds" | "likedPicIds" | "savedPicIds"
 type CountField = "likes" | "bookmarks"
 
 async function videoCount(id: string, field: CountField) {
@@ -389,6 +398,44 @@ async function shiftVideoCount(id: string, field: CountField, delta: 1 | -1) {
   return Math.round(value)
 }
 
+function picFilter(id: string) {
+  const key = id.trim()
+  const or: Record<string, unknown>[] = [{ id: key }, { name: key }]
+  if (ObjectId.isValid(key)) or.push({ _id: new ObjectId(key) })
+  return { $or: or }
+}
+
+function docCount(doc: { [key: string]: unknown } | null | undefined, field: CountField) {
+  const value = Number(doc?.[field])
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0
+}
+
+async function picCount(id: string, field: CountField) {
+  const pics = await getPicsCollection()
+  const doc = await pics.findOne(picFilter(id), { projection: { [field]: 1 } })
+  return docCount(doc as { [key: string]: unknown } | null, field)
+}
+
+async function shiftPicCount(id: string, field: CountField, delta: 1 | -1) {
+  const pics = await getPicsCollection()
+  const filter = picFilter(id)
+  const updated = await pics.findOneAndUpdate(
+    filter,
+    { $inc: { [field]: delta } },
+    { returnDocument: "after", projection: { [field]: 1 } },
+  )
+  if (!updated) {
+    // 找不到文档时，收藏/点赞仍记在用户上；返回期望展示值避免前端被刷成 0
+    return delta > 0 ? 1 : 0
+  }
+  const value = docCount(updated as { [key: string]: unknown }, field)
+  if (value < 0) {
+    await pics.updateOne(filter, { $set: { [field]: 0 } })
+    return 0
+  }
+  return value
+}
+
 async function setUserFlag(username: string, field: IdField, id: string, on: boolean) {
   const users = await getUsersCollection()
   const key = username.toLocaleLowerCase()
@@ -404,7 +451,13 @@ async function setUserFlag(username: string, field: IdField, id: string, on: boo
   return Boolean(updated)
 }
 
-async function syncUserFlags(username: string, field: IdField, countField: CountField, incoming: string[]) {
+async function syncUserFlags(
+  username: string,
+  field: IdField,
+  countField: CountField,
+  incoming: string[],
+  kind: "video" | "pic",
+) {
   await ensureAuthCollections()
   const users = await getUsersCollection()
   const doc = await users.findOne({ usernameKey: username.toLocaleLowerCase() }, { projection: { [field]: 1 } })
@@ -413,15 +466,17 @@ async function syncUserFlags(username: string, field: IdField, countField: Count
   const next = readSavedIds(incoming)
   const nextSet = new Set(next)
   const counts: Record<string, number> = {}
+  const bump = kind === "pic" ? shiftPicCount : shiftVideoCount
+  const readCount = kind === "pic" ? picCount : videoCount
   for (const id of next) {
     if (previous.has(id)) continue
     const changed = await setUserFlag(username, field, id, true)
-    counts[id] = changed ? await shiftVideoCount(id, countField, 1) : await videoCount(id, countField)
+    counts[id] = changed ? await bump(id, countField, 1) : await readCount(id, countField)
   }
   for (const id of previous) {
     if (nextSet.has(id)) continue
     const changed = await setUserFlag(username, field, id, false)
-    counts[id] = changed ? await shiftVideoCount(id, countField, -1) : await videoCount(id, countField)
+    counts[id] = changed ? await bump(id, countField, -1) : await readCount(id, countField)
   }
   const orderChanged = previousList.length !== next.length || previousList.some((id, index) => id !== next[index])
   if (orderChanged) {
@@ -431,11 +486,19 @@ async function syncUserFlags(username: string, field: IdField, countField: Count
 }
 
 export async function saveUserFavorites(username: string, savedIds: string[]) {
-  return syncUserFlags(username, "savedIds", "bookmarks", savedIds)
+  return syncUserFlags(username, "savedIds", "bookmarks", savedIds, "video")
 }
 
 export async function saveUserLikes(username: string, likedIds: string[]) {
-  return syncUserFlags(username, "likedIds", "likes", likedIds)
+  return syncUserFlags(username, "likedIds", "likes", likedIds, "video")
+}
+
+export async function saveUserPicFavorites(username: string, savedPicIds: string[]) {
+  return syncUserFlags(username, "savedPicIds", "bookmarks", savedPicIds, "pic")
+}
+
+export async function saveUserPicLikes(username: string, likedPicIds: string[]) {
+  return syncUserFlags(username, "likedPicIds", "likes", likedPicIds, "pic")
 }
 
 export async function closeSession() {
