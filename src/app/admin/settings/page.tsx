@@ -1,14 +1,57 @@
 "use client"
 
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useEffect, useState, type FormEvent } from "react"
+import { AdminShell } from "@/components/AdminShell"
 import { DEFAULT_APP_SETTINGS, type AppSettings } from "@/lib/settings-types"
+
+type FormDraft = {
+  freeDailyVideos: string
+  freeDailyPics: string
+  inviteNeed: string
+  vipPriceUsdt: string
+}
+
+function toDraft(settings: AppSettings): FormDraft {
+  return {
+    freeDailyVideos: String(settings.freeDailyVideos),
+    freeDailyPics: String(settings.freeDailyPics),
+    inviteNeed: String(settings.inviteNeed),
+    vipPriceUsdt: String(settings.vipPriceUsdt),
+  }
+}
+
+function parsePositiveInt(raw: string, label: string, min: number, max: number) {
+  const text = raw.trim()
+  if (!text) throw new Error(`${label}不能为空`)
+  const value = Number(text)
+  if (!Number.isFinite(value) || !Number.isInteger(value)) throw new Error(`${label}需为整数`)
+  if (value < min || value > max) throw new Error(`${label}需在 ${min}–${max} 之间`)
+  return value
+}
+
+function parsePrice(raw: string) {
+  const text = raw.trim()
+  if (!text) throw new Error("VIP 金额不能为空")
+  const value = Number(text)
+  if (!Number.isFinite(value) || value <= 0) throw new Error("VIP 金额需大于 0")
+  if (value < 0.001 || value > 10000) throw new Error("VIP 金额需在 0.001–10000 之间")
+  return Math.round(value * 1000) / 1000
+}
+
+function parseDraft(draft: FormDraft): AppSettings {
+  return {
+    freeDailyVideos: parsePositiveInt(draft.freeDailyVideos, "每天视频条数", 1, 500),
+    freeDailyPics: parsePositiveInt(draft.freeDailyPics, "每天美图张数", 1, 500),
+    inviteNeed: parsePositiveInt(draft.inviteNeed, "邀请人数", 1, 100),
+    vipPriceUsdt: parsePrice(draft.vipPriceUsdt),
+  }
+}
 
 export default function AdminSettingsPage() {
   const router = useRouter()
   const [adminName, setAdminName] = useState<string | null>(null)
-  const [form, setForm] = useState<AppSettings>({ ...DEFAULT_APP_SETTINGS })
+  const [form, setForm] = useState<FormDraft>(() => toDraft(DEFAULT_APP_SETTINGS))
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,11 +78,14 @@ export default function AdminSettingsPage() {
           setLoading(false)
           return
         }
-        setForm({
-          freeDailyVideos: settings.freeDailyVideos,
-          freeDailyPics: settings.freeDailyPics,
-          inviteNeed: settings.inviteNeed,
-        })
+        setForm(
+          toDraft({
+            freeDailyVideos: settings.freeDailyVideos,
+            freeDailyPics: settings.freeDailyPics,
+            inviteNeed: settings.inviteNeed,
+            vipPriceUsdt: settings.vipPriceUsdt,
+          }),
+        )
         setLoading(false)
       })
       .catch((reason: unknown) => {
@@ -50,11 +96,6 @@ export default function AdminSettingsPage() {
     return () => controller.abort()
   }, [router])
 
-  async function logout() {
-    await fetch("/api/admin/logout", { method: "POST" })
-    router.replace("/admin")
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (pending) return
@@ -62,10 +103,11 @@ export default function AdminSettingsPage() {
     setError(null)
     setSaved(false)
     try {
+      const payload = parseDraft(form)
       const response = await fetch("/api/admin/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       })
       const data = (await response.json()) as AppSettings & { error?: string }
       if (response.status === 401) {
@@ -76,110 +118,97 @@ export default function AdminSettingsPage() {
         setError(data.error || "保存失败")
         return
       }
-      setForm({
-        freeDailyVideos: data.freeDailyVideos,
-        freeDailyPics: data.freeDailyPics,
-        inviteNeed: data.inviteNeed,
-      })
+      setForm(toDraft(data))
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1800)
-    } catch {
-      setError("网络不好，稍后再试")
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "网络不好，稍后再试")
     } finally {
       setPending(false)
     }
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-        <div>
-          <p className="text-[12px] tracking-[0.2em] text-white/35">瞬看 · ADMIN</p>
-          <h1 className="mt-1 text-xl font-semibold">系统配置</h1>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-white/55">
-          <span>{adminName}</span>
-          <Link href="/admin/users" className="hover:text-white">
-            用户管理
-          </Link>
-          <Link href="/" className="hover:text-white">
-            回首页
-          </Link>
-          <button type="button" className="hover:text-white" onClick={() => void logout()}>
-            退出
-          </button>
-        </div>
-      </header>
-
+    <AdminShell title="系统配置" description="调整免费额度、VIP 价格与邀请升级规则" adminName={adminName}>
       {loading ? (
-        <div className="mt-16 grid place-items-center">
+        <div className="grid place-items-center py-20">
           <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/20 border-t-white" />
         </div>
       ) : (
-        <form className="mt-6 space-y-4" onSubmit={(event) => void submit(event)}>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-            <p className="text-sm font-semibold text-white">普通用户额度</p>
+        <form className="mx-auto max-w-2xl space-y-4" onSubmit={(event) => void submit(event)}>
+          <section className="admin-card">
+            <p className="text-[15px] font-semibold text-white">普通用户额度</p>
             <p className="mt-1 text-[12px] text-white/40">按自然日生效；当天已缓存的内容不会立刻重抽</p>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <label className="block text-sm">
                 <span className="text-white/50">每天视频条数</span>
                 <input
-                  type="number"
-                  min={1}
-                  max={500}
+                  type="text"
+                  inputMode="numeric"
                   value={form.freeDailyVideos}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, freeDailyVideos: Number(event.target.value) }))
+                    setForm((current) => ({ ...current, freeDailyVideos: event.target.value }))
                   }
-                  className="mt-2 h-11 w-full rounded-xl border border-white/10 bg-[#171a21] px-3 outline-none focus:border-white/25"
+                  className="admin-field mt-2 w-full"
                 />
               </label>
               <label className="block text-sm">
                 <span className="text-white/50">每天美图张数</span>
                 <input
-                  type="number"
-                  min={1}
-                  max={500}
+                  type="text"
+                  inputMode="numeric"
                   value={form.freeDailyPics}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, freeDailyPics: Number(event.target.value) }))
+                    setForm((current) => ({ ...current, freeDailyPics: event.target.value }))
                   }
-                  className="mt-2 h-11 w-full rounded-xl border border-white/10 bg-[#171a21] px-3 outline-none focus:border-white/25"
+                  className="admin-field mt-2 w-full"
                 />
               </label>
             </div>
-          </div>
+          </section>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-            <p className="text-sm font-semibold text-white">邀请升级</p>
+          <section className="admin-card">
+            <p className="text-[15px] font-semibold text-white">VIP 价格</p>
+            <p className="mt-1 text-[12px] text-white/40">USDT（TRC20）基础金额；实际收款会加 0.001 区分订单</p>
+            <label className="mt-4 block text-sm">
+              <span className="text-white/50">VIP 金额（USDT）</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={form.vipPriceUsdt}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, vipPriceUsdt: event.target.value }))
+                }
+                className="admin-field mt-2 w-full max-w-xs"
+              />
+            </label>
+          </section>
+
+          <section className="admin-card">
+            <p className="text-[15px] font-semibold text-white">邀请升级</p>
             <p className="mt-1 text-[12px] text-white/40">邀请好友开通 VIP 达到人数后，邀请人免费成为 VIP</p>
             <label className="mt-4 block text-sm">
               <span className="text-white/50">需要邀请开通 VIP 的人数</span>
               <input
-                type="number"
-                min={1}
-                max={100}
+                type="text"
+                inputMode="numeric"
                 value={form.inviteNeed}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, inviteNeed: Number(event.target.value) }))
+                  setForm((current) => ({ ...current, inviteNeed: event.target.value }))
                 }
-                className="mt-2 h-11 w-full max-w-xs rounded-xl border border-white/10 bg-[#171a21] px-3 outline-none focus:border-white/25"
+                className="admin-field mt-2 w-full max-w-xs"
               />
             </label>
-          </div>
+          </section>
 
-          {error && <p className="text-sm text-[#ff7a96]">{error}</p>}
-          {saved && <p className="text-sm text-[#25f4ee]">已保存</p>}
+          {error && <p className="admin-alert-error">{error}</p>}
+          {saved && <p className="admin-alert-ok">已保存</p>}
 
-          <button
-            type="submit"
-            disabled={pending}
-            className="h-11 rounded-xl bg-white px-5 text-sm font-semibold text-black disabled:opacity-60"
-          >
+          <button type="submit" disabled={pending} className="admin-btn admin-btn-primary !h-11">
             {pending ? "保存中…" : "保存配置"}
           </button>
         </form>
       )}
-    </div>
+    </AdminShell>
   )
 }

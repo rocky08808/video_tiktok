@@ -12,11 +12,18 @@ function clampInt(value: unknown, min: number, max: number, fallback: number) {
   return Math.min(max, Math.max(min, Math.round(n)))
 }
 
+function clampPrice(value: unknown, fallback: number) {
+  const n = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(10000, Math.max(0.001, Math.round(n * 1000) / 1000))
+}
+
 export function normalizeAppSettings(input: Partial<AppSettings> | null | undefined): AppSettings {
   return {
     freeDailyVideos: clampInt(input?.freeDailyVideos, 1, 500, DEFAULT_APP_SETTINGS.freeDailyVideos),
     freeDailyPics: clampInt(input?.freeDailyPics, 1, 500, DEFAULT_APP_SETTINGS.freeDailyPics),
     inviteNeed: clampInt(input?.inviteNeed, 1, 100, DEFAULT_APP_SETTINGS.inviteNeed),
+    vipPriceUsdt: clampPrice(input?.vipPriceUsdt, DEFAULT_APP_SETTINGS.vipPriceUsdt),
   }
 }
 
@@ -29,6 +36,7 @@ export async function getAppSettings(): Promise<AppSettings> {
       freeDailyVideos: doc?.freeDailyVideos as number | undefined,
       freeDailyPics: doc?.freeDailyPics as number | undefined,
       inviteNeed: doc?.inviteNeed as number | undefined,
+      vipPriceUsdt: doc?.vipPriceUsdt as number | undefined,
     })
   } catch {
     return { ...DEFAULT_APP_SETTINGS }
@@ -47,6 +55,7 @@ export async function updateAppSettings(input: Partial<AppSettings>): Promise<Ap
         freeDailyVideos: next.freeDailyVideos,
         freeDailyPics: next.freeDailyPics,
         inviteNeed: next.inviteNeed,
+        vipPriceUsdt: next.vipPriceUsdt,
         updatedAt: new Date(),
       },
       $setOnInsert: { createdAt: new Date() },

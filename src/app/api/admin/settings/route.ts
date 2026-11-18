@@ -30,11 +30,13 @@ export async function PATCH(request: Request) {
       freeDailyVideos?: unknown
       freeDailyPics?: unknown
       inviteNeed?: unknown
+      vipPriceUsdt?: unknown
     }
     const settings = await updateAppSettings({
       freeDailyVideos: typeof body.freeDailyVideos === "number" ? body.freeDailyVideos : undefined,
       freeDailyPics: typeof body.freeDailyPics === "number" ? body.freeDailyPics : undefined,
       inviteNeed: typeof body.inviteNeed === "number" ? body.inviteNeed : undefined,
+      vipPriceUsdt: typeof body.vipPriceUsdt === "number" ? body.vipPriceUsdt : undefined,
     })
     return Response.json(settings, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {

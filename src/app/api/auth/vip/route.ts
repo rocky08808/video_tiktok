@@ -1,15 +1,17 @@
 import { connection } from "next/server"
 import { confirmVipPayment, currentUser, ensurePendingVipOrder } from "@/lib/auth"
+import { getAppSettings } from "@/lib/app-settings"
 import { describeMongoError } from "@/lib/mongo"
-import { VIP_PRICE_USDT, vipUsdtAddress } from "@/lib/vip"
+import { vipUsdtAddress } from "@/lib/vip"
 
 export async function GET() {
   await connection()
   const user = await currentUser()
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
+  const { vipPriceUsdt } = await getAppSettings()
   if (user.vip) {
     return Response.json(
-      { vip: true, amount: VIP_PRICE_USDT, address: vipUsdtAddress() },
+      { vip: true, amount: vipPriceUsdt, address: vipUsdtAddress() },
       { headers: { "Cache-Control": "no-store" } },
     )
   }
@@ -30,7 +32,8 @@ export async function POST() {
   const user = await currentUser()
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
   if (user.vip) {
-    return Response.json({ vip: true, amount: VIP_PRICE_USDT }, { headers: { "Cache-Control": "no-store" } })
+    const { vipPriceUsdt } = await getAppSettings()
+    return Response.json({ vip: true, amount: vipPriceUsdt }, { headers: { "Cache-Control": "no-store" } })
   }
   try {
     await ensurePendingVipOrder(user.username)

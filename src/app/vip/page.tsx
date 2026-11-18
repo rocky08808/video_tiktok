@@ -10,7 +10,6 @@ import {
   formatVipAmount,
   tgSupportUrl,
   VIP_NETWORK,
-  VIP_PRICE_USDT,
   vipSupportMessage,
   vipUsdtAddress,
 } from "@/lib/vip"
@@ -20,7 +19,7 @@ export default function VipPage() {
   const supportBase = tgSupportUrl()
   const [username, setUsername] = useState<string | null>(null)
   const [vip, setVip] = useState(false)
-  const [amount, setAmount] = useState(VIP_PRICE_USDT)
+  const [amount, setAmount] = useState(DEFAULT_APP_SETTINGS.vipPriceUsdt)
   const [address, setAddress] = useState(fallbackAddress)
   const [inviteCode, setInviteCode] = useState<string | null>(null)
   const [inviteCount, setInviteCount] = useState(0)
@@ -62,6 +61,7 @@ export default function VipPage() {
       setFreeDailyVideos(settings.freeDailyVideos)
       setFreeDailyPics(settings.freeDailyPics)
       setInviteNeed(settings.inviteNeed)
+      setAmount((current) => (current === DEFAULT_APP_SETTINGS.vipPriceUsdt ? settings.vipPriceUsdt : current))
     })
   }, [])
 

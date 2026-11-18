@@ -1,8 +1,8 @@
 "use client"
 
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
+import { AdminShell } from "@/components/AdminShell"
 
 type UserRow = {
   username: string
@@ -45,7 +45,12 @@ export default function AdminUsersPage() {
   const [items, setItems] = useState<UserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [pwdUser, setPwdUser] = useState<string | null>(null)
+  const [pwd, setPwd] = useState("")
+  const [pwd2, setPwd2] = useState("")
+  const [pwdError, setPwdError] = useState<string | null>(null)
 
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -101,9 +106,59 @@ export default function AdminUsersPage() {
     void loadUsers()
   }, [adminName, loadUsers])
 
-  async function logout() {
-    await fetch("/api/admin/logout", { method: "POST" })
-    router.replace("/admin")
+  function openPassword(user: UserRow) {
+    setPwdUser(user.username)
+    setPwd("")
+    setPwd2("")
+    setPwdError(null)
+  }
+
+  function closePassword() {
+    if (busy) return
+    setPwdUser(null)
+    setPwd("")
+    setPwd2("")
+    setPwdError(null)
+  }
+
+  async function submitPassword() {
+    if (!pwdUser || busy) return
+    if (pwd.length < 6) {
+      setPwdError("密码至少 6 位")
+      return
+    }
+    if (pwd !== pwd2) {
+      setPwdError("两次密码不一致")
+      return
+    }
+    setBusy(`pwd:${pwdUser}`)
+    setPwdError(null)
+    setError(null)
+    setInfo(null)
+    try {
+      const response = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: pwdUser, password: pwd }),
+      })
+      const data = (await response.json()) as { error?: string }
+      if (response.status === 401) {
+        router.replace("/admin")
+        return
+      }
+      if (!response.ok) {
+        setPwdError(data.error || "修改失败")
+        return
+      }
+      setInfo(`已更新 ${pwdUser} 的密码`)
+      setPwdUser(null)
+      setPwd("")
+      setPwd2("")
+    } catch {
+      setPwdError("网络不好，稍后再试")
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function toggleVip(user: UserRow) {
@@ -113,6 +168,7 @@ export default function AdminUsersPage() {
     if (!window.confirm(tip)) return
     setBusy(user.username)
     setError(null)
+    setInfo(null)
     try {
       const response = await fetch("/api/admin/users", {
         method: "PATCH",
@@ -137,27 +193,8 @@ export default function AdminUsersPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-        <div>
-          <p className="text-[12px] tracking-[0.2em] text-white/35">瞬看 · ADMIN</p>
-          <h1 className="mt-1 text-xl font-semibold">用户管理</h1>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-white/55">
-          <span>{adminName}</span>
-          <Link href="/admin/settings" className="hover:text-white">
-            系统配置
-          </Link>
-          <Link href="/" className="hover:text-white">
-            回首页
-          </Link>
-          <button type="button" className="hover:text-white" onClick={() => void logout()}>
-            退出
-          </button>
-        </div>
-      </header>
-
-      <div className="mt-5 flex flex-wrap items-center gap-2">
+    <AdminShell title="用户管理" description="查看账号、邀请关系，并开通或取消 VIP" adminName={adminName}>
+      <div className="admin-toolbar">
         <input
           value={q}
           onChange={(event) => setQ(event.target.value)}
@@ -168,7 +205,7 @@ export default function AdminUsersPage() {
             }
           }}
           placeholder="搜索用户名 / 邀请码"
-          className="h-10 min-w-[220px] flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm outline-none placeholder:text-white/30 focus:border-white/25"
+          className="admin-field min-w-[220px] flex-1"
         />
         <select
           value={vip}
@@ -176,15 +213,15 @@ export default function AdminUsersPage() {
             setPage(1)
             setVip(event.target.value as "all" | "yes" | "no")
           }}
-          className="h-10 rounded-lg border border-white/10 bg-[#171a21] px-3 text-sm outline-none"
+          className="admin-field"
         >
-          <option value="all">全部</option>
+          <option value="all">全部用户</option>
           <option value="yes">仅 VIP</option>
           <option value="no">非 VIP</option>
         </select>
         <button
           type="button"
-          className="h-10 rounded-lg bg-white px-4 text-sm font-semibold text-black"
+          className="admin-btn admin-btn-primary"
           onClick={() => {
             setPage(1)
             setQuery(q.trim())
@@ -194,46 +231,47 @@ export default function AdminUsersPage() {
         </button>
       </div>
 
-      <p className="mt-3 text-sm text-white/40">共 {total} 人</p>
-      {error && <p className="mt-2 text-sm text-[#ff7a96]">{error}</p>}
+      <p className="admin-meta">共 {total} 人</p>
+      {error && <p className="admin-alert-error">{error}</p>}
+      {info && <p className="admin-alert-ok">{info}</p>}
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-white/10">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-white/[0.03] text-white/45">
+      <div className="admin-panel mt-4 overflow-x-auto">
+        <table className="admin-table">
+          <thead>
             <tr>
-              <th className="px-3 py-3 font-medium">用户</th>
-              <th className="px-3 py-3 font-medium">VIP</th>
-              <th className="px-3 py-3 font-medium">来源</th>
-              <th className="px-3 py-3 font-medium">邀请</th>
-              <th className="px-3 py-3 font-medium">收藏/赞</th>
-              <th className="px-3 py-3 font-medium">注册时间</th>
-              <th className="px-3 py-3 font-medium">操作</th>
+              <th>用户</th>
+              <th>VIP</th>
+              <th>来源</th>
+              <th>邀请</th>
+              <th>收藏 / 赞</th>
+              <th>注册时间</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-3 py-10 text-center text-white/40">
+                <td colSpan={7} className="!py-12 text-center text-white/40">
                   加载中…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-10 text-center text-white/40">
+                <td colSpan={7} className="!py-12 text-center text-white/40">
                   没有用户
                 </td>
               </tr>
             ) : (
               items.map((user) => (
-                <tr key={user.username} className="border-t border-white/10">
-                  <td className="px-3 py-3">
+                <tr key={user.username}>
+                  <td>
                     <p className="font-medium text-white">{user.username}</p>
                     <p className="mt-0.5 text-[12px] text-white/35">
                       码 {user.inviteCode || "—"}
                       {user.invitedBy ? ` · 由 ${user.invitedBy}` : ""}
                     </p>
                   </td>
-                  <td className="px-3 py-3">
+                  <td>
                     {user.vip ? (
                       <span className="rounded-md bg-[#25f4ee]/15 px-2 py-0.5 text-[12px] font-semibold text-[#25f4ee]">
                         VIP
@@ -243,23 +281,37 @@ export default function AdminUsersPage() {
                     )}
                     {user.vipAt && <p className="mt-1 text-[11px] text-white/30">{formatTime(user.vipAt)}</p>}
                   </td>
-                  <td className="px-3 py-3 text-white/55">{user.vipSource || "—"}</td>
-                  <td className="px-3 py-3 tabular-nums text-white/70">
+                  <td className="text-white/55">{user.vipSource || "—"}</td>
+                  <td className="tabular-nums text-white/70">
                     {user.inviteCount} / VIP {user.inviteVipCount}
                   </td>
-                  <td className="px-3 py-3 tabular-nums text-white/55">
+                  <td className="tabular-nums text-white/55">
                     {user.savedCount} / {user.likedCount}
                   </td>
-                  <td className="px-3 py-3 text-white/45">{formatTime(user.createdAt)}</td>
-                  <td className="px-3 py-3">
-                    <button
-                      type="button"
-                      disabled={busy === user.username}
-                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[12px] text-white/80 disabled:opacity-50"
-                      onClick={() => void toggleVip(user)}
-                    >
-                      {busy === user.username ? "处理中…" : user.vip ? "取消 VIP" : "开通 VIP"}
-                    </button>
+                  <td className="text-white/45">{formatTime(user.createdAt)}</td>
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={!!busy}
+                        className="admin-btn admin-btn-ghost !h-8 !px-3 !text-[12px]"
+                        onClick={() => openPassword(user)}
+                      >
+                        修改密码
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy === user.username}
+                        className={`admin-btn !h-8 !px-3 !text-[12px] ${
+                          user.vip
+                            ? "border border-[#ff7a96]/40 bg-[#ff7a96]/10 text-[#ff8aa3]"
+                            : "border border-[#25f4ee]/40 bg-[#25f4ee]/10 text-[#25f4ee]"
+                        }`}
+                        onClick={() => void toggleVip(user)}
+                      >
+                        {busy === user.username ? "处理中…" : user.vip ? "取消 VIP" : "开通 VIP"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))
@@ -268,10 +320,56 @@ export default function AdminUsersPage() {
         </table>
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3 text-sm text-white/50">
+      {pwdUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="admin-card w-full max-w-sm shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
+            <p className="text-[15px] font-semibold text-white">修改密码</p>
+            <p className="mt-1 text-[12px] text-white/40">用户 {pwdUser}</p>
+            <div className="mt-4 space-y-3">
+              <input
+                type="password"
+                value={pwd}
+                onChange={(event) => setPwd(event.target.value)}
+                placeholder="新密码（至少 6 位）"
+                className="admin-field h-11 w-full"
+                autoComplete="new-password"
+              />
+              <input
+                type="password"
+                value={pwd2}
+                onChange={(event) => setPwd2(event.target.value)}
+                placeholder="再输入一次"
+                className="admin-field h-11 w-full"
+                autoComplete="new-password"
+              />
+              {pwdError && <p className="admin-alert-error !mt-0">{pwdError}</p>}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="admin-btn admin-btn-ghost"
+                disabled={busy === `pwd:${pwdUser}`}
+                onClick={closePassword}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="admin-btn admin-btn-primary"
+                disabled={busy === `pwd:${pwdUser}`}
+                onClick={() => void submitPassword()}
+              >
+                {busy === `pwd:${pwdUser}` ? "保存中…" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="admin-pager">
         <button
           type="button"
-          className="rounded-lg border border-white/10 px-3 py-1.5 disabled:opacity-40"
+          className="admin-btn admin-btn-ghost"
           disabled={page <= 1 || loading}
           onClick={() => setPage((current) => Math.max(1, current - 1))}
         >
@@ -282,13 +380,13 @@ export default function AdminUsersPage() {
         </span>
         <button
           type="button"
-          className="rounded-lg border border-white/10 px-3 py-1.5 disabled:opacity-40"
+          className="admin-btn admin-btn-ghost"
           disabled={page >= pages || loading}
           onClick={() => setPage((current) => current + 1)}
         >
           下一页
         </button>
       </div>
-    </div>
+    </AdminShell>
   )
 }

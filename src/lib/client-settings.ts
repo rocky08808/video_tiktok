@@ -19,6 +19,10 @@ export function applyClientSettings(next: Partial<AppSettings> | null | undefine
         : current.freeDailyPics,
     inviteNeed:
       typeof next.inviteNeed === "number" && next.inviteNeed > 0 ? Math.round(next.inviteNeed) : current.inviteNeed,
+    vipPriceUsdt:
+      typeof next.vipPriceUsdt === "number" && next.vipPriceUsdt > 0
+        ? Math.round(next.vipPriceUsdt * 1000) / 1000
+        : current.vipPriceUsdt,
   }
   return current
 }

@@ -9,7 +9,6 @@ import {
   VIP_AMOUNT_STEP,
   VIP_NETWORK,
   VIP_ORDER_TTL_MS,
-  VIP_PRICE_USDT,
   vipUsdtAddress,
 } from "@/lib/vip"
 
@@ -207,22 +206,25 @@ export async function openVip(username: string, source: "pay" | "invite" | "admi
   return true
 }
 
-function amountSlot(amount: number) {
-  return Math.round((Number(amount) - VIP_PRICE_USDT) / VIP_AMOUNT_STEP)
+function amountSlot(amount: number, base: number) {
+  return Math.round((Number(amount) - base) / VIP_AMOUNT_STEP)
 }
 
 async function nextVipAmount() {
+  const { vipPriceUsdt: base } = await getAppSettings()
   const orders = await getVipOrdersCollection()
   const since = new Date(Date.now() - VIP_ORDER_TTL_MS)
   const pending = await orders
     .find({ status: "pending", createdAt: { $gt: since } }, { projection: { amount: 1 } })
     .toArray()
   const used = new Set(
-    pending.map((item) => amountSlot(Number(item.amount))).filter((n) => Number.isFinite(n) && n >= 0 && n < VIP_AMOUNT_SLOTS),
+    pending
+      .map((item) => amountSlot(Number(item.amount), base))
+      .filter((n) => Number.isFinite(n) && n >= 0 && n < VIP_AMOUNT_SLOTS),
   )
   for (let slot = 0; slot < VIP_AMOUNT_SLOTS; slot += 1) {
     if (!used.has(slot)) {
-      return Math.round((VIP_PRICE_USDT + slot * VIP_AMOUNT_STEP) * 1000) / 1000
+      return Math.round((base + slot * VIP_AMOUNT_STEP) * 1000) / 1000
     }
   }
   throw new Error("当前充值的人有点多，请稍后再试")

@@ -57,45 +57,43 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-5 py-10">
-      <div className="flex flex-col items-center gap-2.5">
-        <BrandLogo className="h-12 w-12" />
-        <p className="text-[12px] font-medium tracking-[0.28em] text-white/35">瞬看</p>
-      </div>
-      <h1 className="mt-3 text-center text-2xl font-semibold tracking-tight">管理后台</h1>
-      <p className="mt-2 text-center text-sm text-white/45">使用管理账号登录</p>
-
-      {checking ? (
-        <div className="mt-16 grid place-items-center">
-          <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+    <div className="admin-login">
+      <div className="admin-login-card">
+        <div className="flex flex-col items-center text-center">
+          <BrandLogo className="h-14 w-14" />
+          <p className="mt-4 text-[11px] font-medium tracking-[0.32em] text-white/40">SHUNKAN</p>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-white">管理后台</h1>
+          <p className="mt-2 text-sm text-white/40">登录后管理用户、订单与系统配置</p>
         </div>
-      ) : (
-        <form className="mt-10 space-y-3" onSubmit={(event) => void submit(event)}>
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            autoComplete="username"
-            placeholder="管理账号"
-            className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm outline-none placeholder:text-white/30 focus:border-white/25"
-          />
-          <input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            type="password"
-            autoComplete="current-password"
-            placeholder="密码"
-            className="h-12 w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 text-sm outline-none placeholder:text-white/30 focus:border-white/25"
-          />
-          {error && <p className="text-sm text-[#ff7a96]">{error}</p>}
-          <button
-            type="submit"
-            disabled={pending}
-            className="h-12 w-full rounded-xl bg-white text-sm font-semibold text-black disabled:opacity-60"
-          >
-            {pending ? "登录中…" : "登录"}
-          </button>
-        </form>
-      )}
+
+        {checking ? (
+          <div className="mt-12 grid place-items-center pb-4">
+            <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+          </div>
+        ) : (
+          <form className="mt-8 space-y-3" onSubmit={(event) => void submit(event)}>
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              placeholder="管理账号"
+              className="admin-field h-12 w-full"
+            />
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+              autoComplete="current-password"
+              placeholder="密码"
+              className="admin-field h-12 w-full"
+            />
+            {error && <p className="admin-alert-error !mt-1">{error}</p>}
+            <button type="submit" disabled={pending} className="admin-btn admin-btn-primary mt-1 h-12 w-full">
+              {pending ? "登录中…" : "进入控制台"}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   )
 }

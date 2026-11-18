@@ -1,5 +1,5 @@
 import { connection } from "next/server"
-import { listUsers, requireAdmin, setUserVip } from "@/lib/admin"
+import { listUsers, requireAdmin, setUserPassword, setUserVip } from "@/lib/admin"
 import { describeMongoError } from "@/lib/mongo"
 
 export async function GET(request: Request) {
@@ -31,16 +31,26 @@ export async function PATCH(request: Request) {
     return Response.json({ error: "请先登录管理后台" }, { status: 401 })
   }
   try {
-    const body = (await request.json()) as { username?: unknown; vip?: unknown }
+    const body = (await request.json()) as { username?: unknown; vip?: unknown; password?: unknown }
     const username = typeof body.username === "string" ? body.username : ""
     if (!username) return Response.json({ error: "缺少用户名" }, { status: 400 })
-    if (typeof body.vip !== "boolean") return Response.json({ error: "缺少 vip" }, { status: 400 })
-    const result = await setUserVip(username, body.vip)
-    return Response.json(result, { headers: { "Cache-Control": "no-store" } })
+
+    if (typeof body.password === "string") {
+      const result = await setUserPassword(username, body.password)
+      return Response.json(result, { headers: { "Cache-Control": "no-store" } })
+    }
+    if (typeof body.vip === "boolean") {
+      const result = await setUserVip(username, body.vip)
+      return Response.json(result, { headers: { "Cache-Control": "no-store" } })
+    }
+    return Response.json({ error: "缺少操作参数" }, { status: 400 })
   } catch (error) {
     const message = error instanceof Error ? error.message : ""
     if (message === "用户不存在" || message === "缺少用户名") {
       return Response.json({ error: message }, { status: 404 })
+    }
+    if (message === "密码至少 6 位") {
+      return Response.json({ error: message }, { status: 400 })
     }
     return Response.json({ error: describeMongoError(error) }, { status: 503 })
   }
