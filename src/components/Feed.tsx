@@ -353,7 +353,8 @@ export function Feed() {
         if (!alive) return
         const page = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
         ensureFreePackIds(page.map((video) => video.id))
-        seenIdsRef.current = rememberSeen([], page.map((video) => video.id))
+        // exclude 只记滑到过的；首包先清空，落到当前条再记
+        seenIdsRef.current = []
         hasMoreRef.current = data.hasMore !== false && page.length >= VIDEO_PAGE_SIZE
         setHasMore(hasMoreRef.current)
         setVideos(page)
@@ -417,11 +418,7 @@ export function Feed() {
           return
         }
 
-        seenIdsRef.current = rememberSeen(
-          seenIdsRef.current,
-          page.map((video) => video.id),
-        )
-        // 尾页不足一页也保持可加载，下次 exclude 耗尽会自动开新轮
+        // 不把整页写入 exclude，只在滑到当前条时记录
         hasMoreRef.current = true
         setHasMore(true)
         setVideos((current) => mergeVideoPages(current, page, allowRepeat))
@@ -438,6 +435,13 @@ export function Feed() {
       alive = false
     }
   }, [active, hasMore, list.length, tab, user?.vip])
+
+  useEffect(() => {
+    if (tab !== "forYou") return
+    const id = list[active]?.id
+    if (!id) return
+    seenIdsRef.current = rememberSeen(seenIdsRef.current, [id])
+  }, [tab, active, list])
 
   useEffect(() => {
     if (!user?.vip || savedIds.length === 0) return
@@ -732,6 +736,8 @@ export function Feed() {
       }
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === "INPUT" || tag === "TEXTAREA") return
+      // 美图打开时由 PicSheet 处理上下键，其它快捷键也先让出
+      if (picsRef.current) return
       if (profileRef.current) return
       const root = scrollerRef.current
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {

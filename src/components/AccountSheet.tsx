@@ -161,7 +161,7 @@ export function AccountSheet({
         onClick={onClose}
       />
       <section
-        className={`absolute inset-x-0 bottom-0 max-h-[min(92dvh,720px)] overflow-y-auto rounded-t-[28px] bg-[#141018] px-5 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
+        className={`absolute inset-x-0 bottom-0 mx-auto w-full max-w-[400px] max-h-[min(92dvh,720px)] overflow-y-auto rounded-t-[28px] bg-[#141018] px-5 pt-3 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
           open ? "translate-y-0" : "translate-y-full"
         }`}
         aria-hidden={!open}

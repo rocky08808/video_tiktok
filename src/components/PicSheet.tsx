@@ -11,8 +11,10 @@ const VIP_SESSION_KEY = "sk_pics_vip"
 const LIKED_PIC_KEY = "sk_pic_liked"
 const SAVED_PIC_KEY = "sk_pic_saved"
 const PIC_PAGE_SIZE = 40
-const PIC_EXCLUDE_MAX = 300
+const PIC_EXCLUDE_MAX = 50_000
 const LOAD_MORE_REMAINING = 8
+/** 虚拟窗口：同时挂载的 DOM 条数上限 */
+const PIC_DOM_WINDOW = 50
 
 type PicItem = PackedPic & { likes: number; bookmarks: number }
 
@@ -31,18 +33,19 @@ type PicsPageResponse = {
 
 function rememberSeen(seen: string[], ids: string[]) {
   const next = [...seen]
+  const have = new Set(next)
   for (const id of ids) {
-    if (!id) continue
-    const at = next.indexOf(id)
-    if (at >= 0) next.splice(at, 1)
+    if (!id || have.has(id)) continue
+    have.add(id)
     next.push(id)
   }
   if (next.length > PIC_EXCLUDE_MAX) next.splice(0, next.length - PIC_EXCLUDE_MAX)
   return next
 }
 
-function mergePicPages(current: PicItem[], incoming: PicItem[]) {
+function mergePicPages(current: PicItem[], incoming: PicItem[], allowRepeat: boolean) {
   if (incoming.length === 0) return current
+  if (allowRepeat) return [...current, ...incoming]
   const have = new Set(current.map((pic) => pic.id))
   const extra = incoming.filter((pic) => !have.has(pic.id))
   return extra.length === 0 ? current : [...current, ...extra]
@@ -194,8 +197,10 @@ export function PicSheet({
   function applyPics(next: PackedPic[], nextIndex: number, nextLimited: boolean, seenIds?: string[]) {
     const normalized = next.map(normalizePic)
     const safeIndex = Math.min(normalized.length - 1, Math.max(0, nextIndex))
+    // 恢复会话时带回已看过的；拉新页不要整页写入 exclude
     if (seenIds) seenIdsRef.current = rememberSeen([], seenIds)
-    else seenIdsRef.current = rememberSeen(seenIdsRef.current, normalized.map((pic) => pic.id))
+    const currentId = normalized[safeIndex]?.id
+    if (currentId) seenIdsRef.current = rememberSeen(seenIdsRef.current, [currentId])
     setLimited(nextLimited)
     setPics(normalized)
     setIndex(safeIndex)
@@ -343,18 +348,33 @@ export function PicSheet({
     setLoading(true)
     setError(null)
     try {
-      const exclude = force && vip ? seenIdsRef.current.slice(-PIC_EXCLUDE_MAX) : []
-      const response =
-        exclude.length > 0
-          ? await fetch("/api/pics", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ limit: PIC_PAGE_SIZE, exclude }),
-            })
-          : await fetch(`/api/pics?limit=${vip ? PIC_PAGE_SIZE : freePicLimit()}`)
-      const data = (await response.json()) as PicsPageResponse
+      const fetchPage = async (exclude: string[]) => {
+        if (exclude.length > 0) {
+          const response = await fetch("/api/pics", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ limit: PIC_PAGE_SIZE, exclude }),
+          })
+          return (await response.json()) as PicsPageResponse
+        }
+        const response = await fetch(`/api/pics?limit=${vip ? PIC_PAGE_SIZE : freePicLimit()}`)
+        return (await response.json()) as PicsPageResponse
+      }
+
+      let exclude = force && vip ? seenIdsRef.current.slice(0, PIC_EXCLUDE_MAX) : []
+      let data = await fetchPage(exclude)
       if (id !== requestId.current) return
-      const next = Array.isArray(data.pics) ? data.pics : []
+      let next = Array.isArray(data.pics) ? data.pics : []
+
+      // 换一批时本轮已空 → 开新一轮
+      if (force && vip && next.length === 0 && exclude.length > 0) {
+        seenIdsRef.current = []
+        exclude = []
+        data = await fetchPage([])
+        if (id !== requestId.current) return
+        next = Array.isArray(data.pics) ? data.pics : []
+      }
+
       const nextLimited = !vip
       if (data.error && next.length === 0) {
         setError(data.error)
@@ -368,16 +388,11 @@ export function PicSheet({
         setHasMore(false)
         return
       }
-      const pageIds = next.map((pic) => pic.id)
-      const nextSeen = force
-        ? rememberSeen(seenIdsRef.current, pageIds)
-        : rememberSeen([], pageIds)
-      seenIdsRef.current = nextSeen
-      // 非 VIP 当天固定额度；VIP 按 hasMore / 页长继续滑
-      const more = vip && data.hasMore !== false && next.length >= PIC_PAGE_SIZE
-      hasMoreRef.current = more
-      setHasMore(more)
-      applyPics(next, 0, nextLimited, nextSeen)
+      if (!force) seenIdsRef.current = []
+      // 非 VIP 当天固定；VIP 保持可继续滑；exclude 只在滑到当前张时记
+      hasMoreRef.current = vip
+      setHasMore(vip)
+      applyPics(next, 0, nextLimited)
     } catch {
       if (id !== requestId.current) return
       setError("网络不好，稍后再试")
@@ -453,6 +468,21 @@ export function PicSheet({
   }, [open, vip, loggedIn])
 
   useEffect(() => {
+    if (!open) return
+    const root = scrollerRef.current
+    if (!root) return
+    const apply = () => root.style.setProperty("--slide-h", `${root.clientHeight}px`)
+    apply()
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(apply) : null
+    observer?.observe(root)
+    window.addEventListener("resize", apply)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener("resize", apply)
+    }
+  }, [open])
+
+  useEffect(() => {
     if (!open || pics.length === 0) return
     const root = scrollerRef.current
     if (!root || root.clientHeight === 0) return
@@ -471,35 +501,46 @@ export function PicSheet({
     loadingMoreRef.current = true
     void (async () => {
       try {
-        const response = await fetch("/api/pics", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            limit: PIC_PAGE_SIZE,
-            exclude: seenIdsRef.current.slice(-PIC_EXCLUDE_MAX),
-          }),
-        })
-        if (!alive) return
-        const data = (await response.json()) as PicsPageResponse
-        if (!alive) return
-        const page = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
-        seenIdsRef.current = rememberSeen(
-          seenIdsRef.current,
-          page.map((pic) => pic.id),
-        )
-        if (page.length > 0) {
-          const more = data.hasMore !== false && page.length >= PIC_PAGE_SIZE
-          hasMoreRef.current = more
-          setHasMore(more)
-          setPics((current) => {
-            const merged = mergePicPages(current, page)
-            persist(merged, indexRef.current)
-            return merged
+        const fetchPage = async (exclude: string[]) => {
+          const response = await fetch("/api/pics", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              limit: PIC_PAGE_SIZE,
+              exclude: exclude.slice(0, PIC_EXCLUDE_MAX),
+            }),
           })
-        } else {
+          return (await response.json()) as PicsPageResponse
+        }
+
+        const exclude = seenIdsRef.current.slice(0, PIC_EXCLUDE_MAX)
+        let data = await fetchPage(exclude)
+        if (!alive) return
+        let page = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
+        let allowRepeat = false
+
+        // 本轮已看完整个库 → 开新一轮
+        if (page.length === 0 && exclude.length > 0) {
+          seenIdsRef.current = []
+          allowRepeat = true
+          data = await fetchPage([])
+          if (!alive) return
+          page = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
+        }
+
+        if (page.length === 0) {
           hasMoreRef.current = false
           setHasMore(false)
+          return
         }
+
+        hasMoreRef.current = true
+        setHasMore(true)
+        setPics((current) => {
+          const merged = mergePicPages(current, page, allowRepeat)
+          persist(merged, indexRef.current)
+          return merged
+        })
       } catch {
         if (!alive) return
         hasMoreRef.current = false
@@ -513,6 +554,14 @@ export function PicSheet({
     }
   }, [open, vip, browsingSaved, index, pics.length, hasMore])
 
+  useEffect(() => {
+    if (!open || browsingSaved) return
+    const id = pics[index]?.id
+    if (!id) return
+    seenIdsRef.current = rememberSeen(seenIdsRef.current, [id])
+    persist(pics, index)
+  }, [open, browsingSaved, index, pics])
+
   function onScroll() {
     const root = scrollerRef.current
     if (!root || root.clientHeight === 0 || pics.length === 0) return
@@ -521,8 +570,30 @@ export function PicSheet({
     applyHeaderHidden(next > indexRef.current)
     indexRef.current = next
     setIndex(next)
-    persist(pics, next)
+    // seen + persist 由 index effect 统一处理
   }
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => {
+      if (savedListOpen) return
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA") return
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+      event.preventDefault()
+      const root = scrollerRef.current
+      if (!root || root.clientHeight === 0 || pics.length === 0) return
+      const next = Math.min(
+        pics.length - 1,
+        Math.max(0, indexRef.current + (event.key === "ArrowDown" ? 1 : -1)),
+      )
+      if (next === indexRef.current) return
+      applyHeaderHidden(event.key === "ArrowDown")
+      root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [open, pics.length, savedListOpen])
 
   function toggleLike() {
     if (!current) return
@@ -723,27 +794,58 @@ export function PicSheet({
               </div>
             </div>
           ) : (
-            pics.map((pic) => (
-              <article
-                key={pic.id}
-                className="relative flex h-full w-full snap-start snap-always items-center justify-center"
-              >
-                <img
-                  src={pic.src}
-                  alt={pic.name}
-                  referrerPolicy="no-referrer"
-                  className="block h-auto w-full"
-                  draggable={false}
-                  onClick={() => {
-                    if (suppressTap.current) {
-                      suppressTap.current = false
-                      return
-                    }
-                    applyHeaderHidden(false)
-                  }}
-                />
-              </article>
-            ))
+            (() => {
+              const half = Math.floor(PIC_DOM_WINDOW / 2)
+              let from = Math.max(0, index - half)
+              let to = Math.min(pics.length - 1, from + PIC_DOM_WINDOW - 1)
+              from = Math.max(0, to - PIC_DOM_WINDOW + 1)
+              const before = from
+              const after = pics.length - 1 - to
+              return (
+                <>
+                  {before > 0 ? (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none shrink-0"
+                      style={{ height: `calc(${before} * var(--slide-h, 100%))` }}
+                    />
+                  ) : null}
+                  {pics.slice(from, to + 1).map((pic, offset) => {
+                    const picIndex = from + offset
+                    return (
+                      <article
+                        key={`${pic.id}-${picIndex}`}
+                        className="relative flex w-full shrink-0 snap-start snap-always items-center justify-center"
+                        style={{ height: "var(--slide-h, 100%)" }}
+                      >
+                        <img
+                          src={pic.src}
+                          alt={pic.name}
+                          referrerPolicy="no-referrer"
+                          className="pic-fit block h-full w-auto max-w-full object-contain"
+                          draggable={false}
+                          loading={Math.abs(picIndex - index) <= 2 ? "eager" : "lazy"}
+                          onClick={() => {
+                            if (suppressTap.current) {
+                              suppressTap.current = false
+                              return
+                            }
+                            applyHeaderHidden(false)
+                          }}
+                        />
+                      </article>
+                    )
+                  })}
+                  {after > 0 ? (
+                    <div
+                      aria-hidden
+                      className="pointer-events-none shrink-0"
+                      style={{ height: `calc(${after} * var(--slide-h, 100%))` }}
+                    />
+                  ) : null}
+                </>
+              )
+            })()
           )}
         </div>
 

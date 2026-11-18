@@ -6,7 +6,8 @@ import { VIP_PIC_FREE } from "@/lib/vip"
 
 export const PIC_FREE_LIMIT = VIP_PIC_FREE
 export const PIC_PAGE_SIZE = 40
-export const PIC_EXCLUDE_MAX = 300
+/** 单次 exclude 上限（整库去重一轮） */
+export const PIC_EXCLUDE_MAX = 50_000
 
 export type PicItem = {
   id: string
