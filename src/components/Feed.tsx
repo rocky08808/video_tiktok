@@ -306,8 +306,15 @@ export function Feed() {
 
   useEffect(() => {
     try {
-      const code = new URLSearchParams(window.location.search).get("invite")
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get("invite")
       if (code) storeInviteCode(code)
+      if (params.get("login") === "1") {
+        setProfileOpen(true)
+        params.delete("login")
+        const next = params.toString()
+        window.history.replaceState(null, "", next ? `/?${next}` : "/")
+      }
     } catch {
       // ignore
     }

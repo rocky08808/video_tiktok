@@ -417,7 +417,7 @@ export default function VipPage() {
           <div className="relative z-10 shrink-0 border-t border-white/10 bg-[#141018]/92 px-5 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] backdrop-blur">
             {!username ? (
               <Link
-                href="/"
+                href="/?login=1"
                 className="grid h-12 w-full place-items-center rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
               >
                 先去登录
