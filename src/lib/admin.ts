@@ -4,6 +4,7 @@ import { cookies } from "next/headers"
 import { hashPassword, hashToken, openVip } from "@/lib/auth"
 import { isVipUntilActive, readVipUntil } from "@/lib/vip"
 import { getSessionsCollection, getUsersCollection, getVipOrdersCollection } from "@/lib/mongo"
+import { countReactionsForUsers } from "@/lib/reactions"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
 import { formatVipAmount, VIP_ORDER_TTL_MS, vipUsdtAddress } from "@/lib/vip"
 
@@ -170,6 +171,11 @@ export async function listUsers(input: {
     .toArray()
 
   const names = docs.map((doc) => (typeof doc.username === "string" ? doc.username : "")).filter(Boolean)
+  const usernameKeys = names.map((name) => name.toLocaleLowerCase())
+  const [savedCountMap, likedCountMap] = await Promise.all([
+    countReactionsForUsers(usernameKeys, "video_save"),
+    countReactionsForUsers(usernameKeys, "video_like"),
+  ])
   const inviteAgg =
     names.length === 0
       ? []
@@ -209,8 +215,12 @@ export async function listUsers(input: {
         invitedBy: typeof doc.invitedBy === "string" ? doc.invitedBy : null,
         inviteCount: invite.inviteCount,
         inviteVipCount: invite.inviteVipCount,
-        savedCount: Array.isArray(doc.savedIds) ? doc.savedIds.length : 0,
-        likedCount: Array.isArray(doc.likedIds) ? doc.likedIds.length : 0,
+        savedCount:
+          savedCountMap.get(doc.username.toLocaleLowerCase()) ||
+          (Array.isArray(doc.savedIds) ? doc.savedIds.length : 0),
+        likedCount:
+          likedCountMap.get(doc.username.toLocaleLowerCase()) ||
+          (Array.isArray(doc.likedIds) ? doc.likedIds.length : 0),
         createdAt: asDate(doc.createdAt),
       },
     ]

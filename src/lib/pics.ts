@@ -97,8 +97,8 @@ function excludeMatch(exclude: string[]) {
   return { $nor: clauses }
 }
 
-export async function getPicsByIds(ids: string[]) {
-  const ordered = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(0, PIC_EXCLUDE_MAX)
+export async function getPicsByIds(ids: string[], max = 2000) {
+  const ordered = [...new Set(ids.map((id) => id.trim()).filter(Boolean))].slice(0, Math.max(1, max))
   if (ordered.length === 0) return { pics: [] as PicItem[] }
   const base = publicBase()
   if (!mongoUri()) return { pics: [] as PicItem[], error: "缺少 MONGODB_URI" }

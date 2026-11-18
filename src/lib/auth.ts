@@ -9,6 +9,13 @@ import {
   getVideoCollection,
   getVipOrdersCollection,
 } from "@/lib/mongo"
+import {
+  ensureReactionIndexes,
+  listReactionIds,
+  normalizeReactionIds,
+  syncReactionIds,
+  type ReactionKind,
+} from "@/lib/reactions"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
 import { getAppSettings } from "@/lib/app-settings"
 import {
@@ -72,6 +79,7 @@ export async function ensureAuthCollections() {
       await users.createIndex({ invitedBy: 1 })
       await sessions.createIndex({ tokenHash: 1 }, { unique: true })
       await sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 })
+      await ensureReactionIndexes()
     })().catch((error: unknown) => {
       ready = null
       throw error
@@ -164,14 +172,7 @@ export async function openSession(username: string) {
 }
 
 export function readSavedIds(value: unknown) {
-  if (!Array.isArray(value)) return []
-  const ids: string[] = []
-  for (const item of value) {
-    if (typeof item !== "string" || item.length === 0 || item.length > 200 || ids.includes(item)) continue
-    ids.push(item)
-    if (ids.length >= 5000) break
-  }
-  return ids
+  return normalizeReactionIds(value)
 }
 
 export async function currentUser() {
@@ -205,6 +206,12 @@ export async function currentUser() {
   const inviteVipCount = await countInviteVip(session.username)
   const inviteCount = await users.countDocuments({ invitedBy: session.username })
   const settings = await getAppSettings()
+  const [savedIds, likedIds, savedPicIds, likedPicIds] = await Promise.all([
+    listReactionIds(key, "video_save"),
+    listReactionIds(key, "video_like"),
+    listReactionIds(key, "pic_save"),
+    listReactionIds(key, "pic_like"),
+  ])
   return {
     username: session.username,
     vip,
@@ -215,10 +222,10 @@ export async function currentUser() {
     inviteNeed: settings.inviteNeed,
     freeDailyVideos: settings.freeDailyVideos,
     freeDailyPics: settings.freeDailyPics,
-    savedIds: readSavedIds(doc?.savedIds),
-    likedIds: readSavedIds(doc?.likedIds),
-    savedPicIds: readSavedIds(doc?.savedPicIds),
-    likedPicIds: readSavedIds(doc?.likedPicIds),
+    savedIds,
+    likedIds,
+    savedPicIds,
+    likedPicIds,
   }
 }
 
@@ -460,8 +467,14 @@ export async function confirmVipPayment(username: string) {
   return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId, orderId: String(order._id) }
 }
 
-type IdField = "likedIds" | "savedIds" | "likedPicIds" | "savedPicIds"
 type CountField = "likes" | "bookmarks"
+
+const FLAG_KIND: Record<"likedIds" | "savedIds" | "likedPicIds" | "savedPicIds", ReactionKind> = {
+  likedIds: "video_like",
+  savedIds: "video_save",
+  likedPicIds: "pic_like",
+  savedPicIds: "pic_save",
+}
 
 async function videoCount(id: string, field: CountField) {
   const videos = await getVideoCollection()
@@ -523,53 +536,25 @@ async function shiftPicCount(id: string, field: CountField, delta: 1 | -1) {
   return value
 }
 
-async function setUserFlag(username: string, field: IdField, id: string, on: boolean) {
-  const users = await getUsersCollection()
-  const key = username.toLocaleLowerCase()
-  const updated = on
-    ? await users.findOneAndUpdate(
-        { usernameKey: key, [field]: { $ne: id } },
-        { $addToSet: { [field]: id } } as Record<string, unknown>,
-      )
-    : await users.findOneAndUpdate(
-        { usernameKey: key, [field]: id },
-        { $pull: { [field]: id } } as Record<string, unknown>,
-      )
-  return Boolean(updated)
-}
-
 async function syncUserFlags(
   username: string,
-  field: IdField,
+  field: "likedIds" | "savedIds" | "likedPicIds" | "savedPicIds",
   countField: CountField,
   incoming: string[],
-  kind: "video" | "pic",
+  media: "video" | "pic",
 ) {
   await ensureAuthCollections()
-  const users = await getUsersCollection()
-  const doc = await users.findOne({ usernameKey: username.toLocaleLowerCase() }, { projection: { [field]: 1 } })
-  const previousList = readSavedIds(doc?.[field])
-  const previous = new Set(previousList)
-  const next = readSavedIds(incoming)
-  const nextSet = new Set(next)
-  const counts: Record<string, number> = {}
-  const bump = kind === "pic" ? shiftPicCount : shiftVideoCount
-  const readCount = kind === "pic" ? picCount : videoCount
-  for (const id of next) {
-    if (previous.has(id)) continue
-    const changed = await setUserFlag(username, field, id, true)
-    counts[id] = changed ? await bump(id, countField, 1) : await readCount(id, countField)
-  }
-  for (const id of previous) {
-    if (nextSet.has(id)) continue
-    const changed = await setUserFlag(username, field, id, false)
-    counts[id] = changed ? await bump(id, countField, -1) : await readCount(id, countField)
-  }
-  const orderChanged = previousList.length !== next.length || previousList.some((id, index) => id !== next[index])
-  if (orderChanged) {
-    await users.updateOne({ usernameKey: username.toLocaleLowerCase() }, { $set: { [field]: next } })
-  }
-  return { ids: next, counts }
+  const usernameKey = username.toLocaleLowerCase()
+  const bump = media === "pic" ? shiftPicCount : shiftVideoCount
+  const readCount = media === "pic" ? picCount : videoCount
+  return syncReactionIds(
+    usernameKey,
+    FLAG_KIND[field],
+    incoming,
+    (id) => bump(id, countField, 1),
+    (id) => bump(id, countField, -1),
+    (id) => readCount(id, countField),
+  )
 }
 
 export async function saveUserFavorites(username: string, savedIds: string[]) {
