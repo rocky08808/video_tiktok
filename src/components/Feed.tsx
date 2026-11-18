@@ -41,6 +41,18 @@ function readLocalLiked() {
   return readLocalIds(LIKED_KEY)
 }
 
+function clearLocalAuthData() {
+  try {
+    localStorage.removeItem(SAVED_KEY)
+    localStorage.removeItem(LIKED_KEY)
+    localStorage.removeItem("sk_pic_liked")
+    localStorage.removeItem("sk_pic_saved")
+    sessionStorage.removeItem("sk_pics_vip")
+  } catch {
+    // ignore
+  }
+}
+
 function rememberCounts(
   fixes: { likes: Record<string, number>; bookmarks: Record<string, number> },
   field: "likes" | "bookmarks",
@@ -359,8 +371,9 @@ export function Feed() {
         if (!data.username) {
           setUser(null)
           setAuthReady(true)
-          if (latestLocal.length > 0) setSavedIds(latestLocal)
-          if (latestLiked.length > 0) setLikedIds(latestLiked)
+          clearLocalAuthData()
+          setSavedIds([])
+          setLikedIds([])
           return
         }
         setAuthReady(true)
@@ -375,16 +388,25 @@ export function Feed() {
         })
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
-        setSavedIds((current) => {
-          const merged = mergeIds(remote, mergeIds(latestLocal, current))
-          if (data.vip === true && !sameIds(merged, remote)) {
-            void pushIds("saved", merged).then((counts) => {
-              rememberCounts(countFixes.current, "bookmarks", counts)
-              paintCounts(setVideos, "bookmarks", counts)
-            })
-          } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
-          return merged
-        })
+        if (data.vip === true) {
+          setSavedIds((current) => {
+            const merged = mergeIds(remote, mergeIds(latestLocal, current))
+            if (!sameIds(merged, remote)) {
+              void pushIds("saved", merged).then((counts) => {
+                rememberCounts(countFixes.current, "bookmarks", counts)
+                paintCounts(setVideos, "bookmarks", counts)
+              })
+            } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
+            return merged
+          })
+        } else {
+          setSavedIds([])
+          try {
+            localStorage.removeItem(SAVED_KEY)
+          } catch {
+            // ignore
+          }
+        }
         setLikedIds((current) => {
           const merged = mergeIds(remoteLiked, mergeIds(latestLiked, current))
           if (!sameIds(merged, remoteLiked)) {
@@ -723,8 +745,19 @@ function activeVideo() {
       inviteNeed?: number
     } | null,
   ) {
+    if (!next) {
+      clearLocalAuthData()
+      setSavedIds([])
+      setLikedIds([])
+      setUser(null)
+      if (tabRef.current === "saved") {
+        activeRef.current = forYouIndex.current
+        setTab("forYou")
+        setActive(forYouIndex.current)
+      }
+      return
+    }
     setUser(next)
-    if (!next) return
     void fetch("/api/auth/me")
       .then((response) =>
         response.json() as Promise<{
@@ -755,22 +788,33 @@ function activeVideo() {
               }
             : current,
         )
-        setSavedIds((current) => {
-          const merged = mergeIds(remote, current)
-          if (vip) {
-            void pushIds("saved", merged).then((counts) => {
-              rememberCounts(countFixes.current, "bookmarks", counts)
-              paintCounts(setVideos, "bookmarks", counts)
-            })
-          } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
-          return merged
-        })
+        if (vip) {
+          setSavedIds((current) => {
+            const merged = mergeIds(remote, current)
+            if (!sameIds(merged, remote)) {
+              void pushIds("saved", merged).then((counts) => {
+                rememberCounts(countFixes.current, "bookmarks", counts)
+                paintCounts(setVideos, "bookmarks", counts)
+              })
+            } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
+            return merged
+          })
+        } else {
+          setSavedIds([])
+          try {
+            localStorage.removeItem(SAVED_KEY)
+          } catch {
+            // ignore
+          }
+        }
         setLikedIds((current) => {
           const merged = mergeIds(remoteLiked, current)
-          void pushIds("liked", merged).then((counts) => {
-            rememberCounts(countFixes.current, "likes", counts)
-            paintCounts(setVideos, "likes", counts)
-          })
+          if (!sameIds(merged, remoteLiked)) {
+            void pushIds("liked", merged).then((counts) => {
+              rememberCounts(countFixes.current, "likes", counts)
+              paintCounts(setVideos, "likes", counts)
+            })
+          } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
           return merged
         })
       })
@@ -939,7 +983,7 @@ function activeVideo() {
           <nav className="pointer-events-auto flex items-center gap-6 pt-1 text-[17px] font-semibold">
             <TabButton
               active={tab === "saved"}
-              badge={user && savedIds.length > 0 ? formatCount(savedIds.length) : undefined}
+              badge={user?.vip && savedIds.length > 0 ? formatCount(savedIds.length) : undefined}
               onClick={() => selectTab("saved")}
             >
               收藏
@@ -968,7 +1012,7 @@ function activeVideo() {
           </div>
         </header>
 
-        {!loading && tab === "saved" && list.length > 0 && (
+        {!loading && tab === "saved" && user?.vip && list.length > 0 && (
           <div
             className="feed-profile pointer-events-none absolute left-4 bottom-[max(22px,env(safe-area-inset-bottom))] z-30 pb-1"
             data-hidden={chromeHidden ? "true" : "false"}

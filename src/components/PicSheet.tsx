@@ -320,6 +320,24 @@ export function PicSheet({
   }
 
   useEffect(() => {
+    if (!loggedIn) {
+      setLikedIds([])
+      setSavedIds([])
+      setSavedList([])
+      setSavedListOpen(false)
+      setBrowsingSaved(false)
+      feedBackup.current = null
+      try {
+        localStorage.removeItem(LIKED_PIC_KEY)
+        localStorage.removeItem(SAVED_PIC_KEY)
+        sessionStorage.removeItem(VIP_SESSION_KEY)
+      } catch {
+        // ignore
+      }
+    }
+  }, [loggedIn])
+
+  useEffect(() => {
     if (!open) {
       applyHeaderHidden(false)
       setSavedListOpen(false)
@@ -330,11 +348,17 @@ export function PicSheet({
       return
     }
     applyHeaderHidden(false)
-    setLikedIds(readLocalIds(LIKED_PIC_KEY))
-    setSavedIds(readLocalIds(SAVED_PIC_KEY))
+    if (loggedIn) {
+      setLikedIds(readLocalIds(LIKED_PIC_KEY))
+      setSavedIds(readLocalIds(SAVED_PIC_KEY))
+    } else {
+      setLikedIds([])
+      setSavedIds([])
+    }
     void fetchClientSettings().then(() => {
       void loadPics(false)
     })
+    if (!loggedIn) return
     void fetch("/api/auth/me")
       .then(
         (response) =>
@@ -356,8 +380,8 @@ export function PicSheet({
         }
       })
       .catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload when sheet opens or vip flips
-  }, [open, vip])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only reload when sheet opens or vip/login flips
+  }, [open, vip, loggedIn])
 
   useEffect(() => {
     if (!open || pics.length === 0) return
