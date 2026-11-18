@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next"
+import Script from "next/script"
 import { SITE_DESCRIPTION, SITE_NAME, SITE_TAGLINE, siteUrl } from "@/lib/site"
 import "./globals.css"
 
@@ -110,7 +111,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
-      <body className="h-dvh overflow-hidden antialiased">{children}</body>
+      <body className="h-dvh overflow-hidden antialiased">
+        {children}
+        <Script
+          src="https://cloud.webscount.com/script.js"
+          strategy="afterInteractive"
+          data-website-id="72a5fef4-024a-493d-a685-36f7a187329d"
+        />
+      </body>
     </html>
   )
 }
