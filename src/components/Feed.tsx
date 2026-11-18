@@ -297,28 +297,34 @@ export function Feed() {
   }, [active, list, tab, user?.vip])
 
   useEffect(() => {
+    let alive = true
     const controller = new AbortController()
-    void fetchClientSettings()
-      .then((settings) => {
+    setLoading(true)
+    void (async () => {
+      try {
+        const settings = await fetchClientSettings()
+        if (!alive) return
         setLimits({ ...settings })
-        return fetch("/api/videos", { signal: controller.signal })
-      })
-      .then((response) => response.json() as Promise<VideoFeedResponse>)
-      .then((data) => {
+        const response = await fetch("/api/videos", { signal: controller.signal })
+        const data = (await response.json()) as VideoFeedResponse
+        if (!alive) return
         const all = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
         ensureFreePackIds(all.map((video) => video.id))
         setVideos(all)
         setMode(data.mode)
         setError(data.error ?? null)
-      })
-      .catch((reason: unknown) => {
+        setLoading(false)
+      } catch (reason: unknown) {
+        if (!alive) return
         if (reason instanceof DOMException && reason.name === "AbortError") return
         setError("视频列表加载失败")
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
+        setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+      controller.abort()
+    }
   }, [])
 
   useEffect(() => {
@@ -460,8 +466,6 @@ export function Feed() {
     })
     root.querySelectorAll<HTMLElement>("[data-index]").forEach((node) => observer.observe(node))
     return () => observer.disconnect()
-    // active 变化时附近节点会换，需要重新 observe
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- list identity + active window
   }, [list.length, active, tab])
 
   useEffect(() => {

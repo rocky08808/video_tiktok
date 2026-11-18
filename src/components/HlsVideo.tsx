@@ -76,7 +76,7 @@ export function HlsVideo({
     }
 
     const attach = async () => {
-      const { default: HlsCtor } = await import("hls.js")
+      const { default: HlsCtor, FetchLoader } = await import("hls.js")
       if (destroyed) return
       if (!HlsCtor.isSupported()) {
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -90,8 +90,15 @@ export function HlsVideo({
       }
 
       let recovered = 0
+      // R2/CDN 会拦带 localhost Referer 的请求（403），用 fetch + no-referrer
       const player = new HlsCtor({
         enableWorker: false,
+        loader: FetchLoader,
+        fetchSetup: (_context, init) =>
+          new Request(_context.url, {
+            ...init,
+            referrerPolicy: "no-referrer",
+          }),
         capLevelToPlayerSize: true,
         maxBufferLength: 8,
         maxMaxBufferLength: 12,
