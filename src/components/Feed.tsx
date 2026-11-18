@@ -154,6 +154,8 @@ export function Feed() {
   const activeRef = useRef(0)
   const forYouIndex = useRef(0)
   const [videos, setVideos] = useState<VideoItem[]>([])
+  /** 收藏专用目录，不并入推荐流，避免刷到一堆收藏 */
+  const [savedCatalog, setSavedCatalog] = useState<VideoItem[]>([])
   const [mode, setMode] = useState<VideoFeedResponse["mode"] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -261,7 +263,9 @@ export function Feed() {
 
   const list = useMemo(() => {
     if (tab === "saved") {
-      const byId = new Map(videos.map((video) => [video.id, video]))
+      const byId = new Map<string, VideoItem>()
+      for (const video of videos) byId.set(video.id, video)
+      for (const video of savedCatalog) byId.set(video.id, video)
       return savedIds.flatMap((id) => {
         const video = byId.get(id)
         return video ? [video] : []
@@ -276,7 +280,7 @@ export function Feed() {
       return video ? [video] : []
     })
     return packed.length > 0 ? packed : videos.slice(0, readClientSettings().freeDailyVideos)
-  }, [tab, videos, savedIds, user?.vip, limits.freeDailyVideos])
+  }, [tab, videos, savedCatalog, savedIds, user?.vip, limits.freeDailyVideos])
   listRef.current = list
 
   function allowIndex(index: number) {
@@ -414,7 +418,10 @@ export function Feed() {
 
   useEffect(() => {
     if (!user?.vip || savedIds.length === 0) return
-    const have = new Set(videos.map((video) => video.id))
+    const have = new Set([
+      ...videos.map((video) => video.id),
+      ...savedCatalog.map((video) => video.id),
+    ])
     const missing = savedIds.filter((id) => !have.has(id) && !fetchedSavedRef.current.has(id))
     if (missing.length === 0) return
 
@@ -436,7 +443,7 @@ export function Feed() {
         if (!alive) return
         const found = applyCountFixes(data.videos ?? [], countFixes.current)
         if (found.length === 0) return
-        setVideos((current) => {
+        setSavedCatalog((current) => {
           const map = new Map(current.map((video) => [video.id, video]))
           for (const video of found) map.set(video.id, video)
           return [...map.values()]
@@ -450,7 +457,7 @@ export function Feed() {
       alive = false
       controller.abort()
     }
-  }, [savedIds, user?.vip, videos])
+  }, [savedIds, user?.vip, videos, savedCatalog])
 
   useEffect(() => {
     try {
@@ -505,6 +512,8 @@ export function Feed() {
           clearLocalAuthData()
           setSavedIds([])
           setLikedIds([])
+          setSavedCatalog([])
+          fetchedSavedRef.current.clear()
           return
         }
         setAuthReady(true)
@@ -525,13 +534,15 @@ export function Feed() {
             if (!sameIds(merged, remote)) {
               void pushIds("saved", merged).then((counts) => {
                 rememberCounts(countFixes.current, "bookmarks", counts)
-                paintCounts(setVideos, "bookmarks", counts)
+                paintFeedCounts("bookmarks", counts)
               })
             } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
             return merged
           })
         } else {
           setSavedIds([])
+          setSavedCatalog([])
+          fetchedSavedRef.current.clear()
           try {
             localStorage.removeItem(SAVED_KEY)
           } catch {
@@ -543,7 +554,7 @@ export function Feed() {
           if (!sameIds(merged, remoteLiked)) {
             void pushIds("liked", merged).then((counts) => {
               rememberCounts(countFixes.current, "likes", counts)
-              paintCounts(setVideos, "likes", counts)
+              paintFeedCounts("likes", counts)
             })
           } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
           return merged
@@ -809,14 +820,20 @@ function activeVideo() {
   }
 
   function changeCount(id: string, field: "likes" | "bookmarks", delta: number) {
-    setVideos((current) =>
+    const patch = (current: VideoItem[]) =>
       current.map((video) => {
         if (video.id !== id) return video
         const value = Math.max(0, video[field] + delta)
         countFixes.current[field][id] = value
         return { ...video, [field]: value }
-      }),
-    )
+      })
+    setVideos(patch)
+    setSavedCatalog(patch)
+  }
+
+  function paintFeedCounts(field: "likes" | "bookmarks", counts: Record<string, number> | null | undefined) {
+    paintCounts(setVideos, field, counts)
+    paintCounts(setSavedCatalog, field, counts)
   }
 
   function toggleSaved(id: string) {
@@ -837,7 +854,7 @@ function activeVideo() {
       if (seq !== savedSeq.current) return
       if (counts) {
         rememberCounts(countFixes.current, "bookmarks", counts)
-        paintCounts(setVideos, "bookmarks", counts)
+        paintFeedCounts("bookmarks", counts)
         return
       }
       if (user) changeCount(id, "bookmarks", adding ? -1 : 1)
@@ -858,7 +875,7 @@ function activeVideo() {
       if (seq !== likedSeq.current) return
       if (counts) {
         rememberCounts(countFixes.current, "likes", counts)
-        paintCounts(setVideos, "likes", counts)
+        paintFeedCounts("likes", counts)
         return
       }
       if (user) changeCount(id, "likes", adding ? -1 : 1)
@@ -880,6 +897,8 @@ function activeVideo() {
       clearLocalAuthData()
       setSavedIds([])
       setLikedIds([])
+      setSavedCatalog([])
+      fetchedSavedRef.current.clear()
       setUser(null)
       if (tabRef.current === "saved") {
         activeRef.current = forYouIndex.current
@@ -925,13 +944,15 @@ function activeVideo() {
             if (!sameIds(merged, remote)) {
               void pushIds("saved", merged).then((counts) => {
                 rememberCounts(countFixes.current, "bookmarks", counts)
-                paintCounts(setVideos, "bookmarks", counts)
+                paintFeedCounts("bookmarks", counts)
               })
             } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
             return merged
           })
         } else {
           setSavedIds([])
+          setSavedCatalog([])
+          fetchedSavedRef.current.clear()
           try {
             localStorage.removeItem(SAVED_KEY)
           } catch {
@@ -943,7 +964,7 @@ function activeVideo() {
           if (!sameIds(merged, remoteLiked)) {
             void pushIds("liked", merged).then((counts) => {
               rememberCounts(countFixes.current, "likes", counts)
-              paintCounts(setVideos, "likes", counts)
+              paintFeedCounts("likes", counts)
             })
           } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
           return merged
