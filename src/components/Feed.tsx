@@ -25,25 +25,27 @@ type Tab = "forYou" | "saved"
 const SAVED_KEY = "sk_saved"
 const LIKED_KEY = "sk_liked"
 const VIDEO_PAGE_SIZE = 40
-const VIDEO_EXCLUDE_MAX = 300
+/** 与服务端一致：一轮内尽量排除整库已看过的 */
+const VIDEO_EXCLUDE_MAX = 50_000
 const LOAD_MORE_REMAINING = 8
 
 type VideosPageResponse = VideoFeedResponse & { hasMore?: boolean }
 
 function rememberSeen(seen: string[], ids: string[]) {
   const next = [...seen]
+  const have = new Set(next)
   for (const id of ids) {
-    if (!id) continue
-    const at = next.indexOf(id)
-    if (at >= 0) next.splice(at, 1)
+    if (!id || have.has(id)) continue
+    have.add(id)
     next.push(id)
   }
   if (next.length > VIDEO_EXCLUDE_MAX) next.splice(0, next.length - VIDEO_EXCLUDE_MAX)
   return next
 }
 
-function mergeVideoPages(current: VideoItem[], incoming: VideoItem[]) {
+function mergeVideoPages(current: VideoItem[], incoming: VideoItem[], allowRepeat: boolean) {
   if (incoming.length === 0) return current
+  if (allowRepeat) return [...current, ...incoming]
   const have = new Set(current.map((video) => video.id))
   const extra = incoming.filter((video) => !have.has(video.id))
   return extra.length === 0 ? current : [...current, ...extra]
@@ -382,31 +384,47 @@ export function Feed() {
     setLoadingMore(true)
     void (async () => {
       try {
-        const response = await fetch("/api/videos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            limit: VIDEO_PAGE_SIZE,
-            exclude: seenIdsRef.current.slice(-VIDEO_EXCLUDE_MAX),
-          }),
-        })
+        const fetchPage = async (exclude: string[]) => {
+          const response = await fetch("/api/videos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              limit: VIDEO_PAGE_SIZE,
+              exclude: exclude.slice(0, VIDEO_EXCLUDE_MAX),
+            }),
+          })
+          return (await response.json()) as VideosPageResponse
+        }
+
+        const exclude = seenIdsRef.current.slice(0, VIDEO_EXCLUDE_MAX)
+        let data = await fetchPage(exclude)
         if (!alive) return
-        const data = (await response.json()) as VideosPageResponse
-        if (!alive) return
-        const page = applyCountFixes(data.videos ?? [], countFixes.current)
+        let page = applyCountFixes(data.videos ?? [], countFixes.current)
+        let allowRepeat = false
+
+        // 本轮已看完整个库 → 清空 exclude，开新一轮（此后才允许重复）
+        if (page.length === 0 && exclude.length > 0) {
+          seenIdsRef.current = []
+          allowRepeat = true
+          data = await fetchPage([])
+          if (!alive) return
+          page = applyCountFixes(data.videos ?? [], countFixes.current)
+        }
+
+        if (page.length === 0) {
+          hasMoreRef.current = false
+          setHasMore(false)
+          return
+        }
+
         seenIdsRef.current = rememberSeen(
           seenIdsRef.current,
           page.map((video) => video.id),
         )
-        if (page.length > 0) {
-          const more = data.hasMore !== false && page.length >= VIDEO_PAGE_SIZE
-          hasMoreRef.current = more
-          setHasMore(more)
-          setVideos((current) => mergeVideoPages(current, page))
-        } else {
-          hasMoreRef.current = false
-          setHasMore(false)
-        }
+        // 尾页不足一页也保持可加载，下次 exclude 耗尽会自动开新轮
+        hasMoreRef.current = true
+        setHasMore(true)
+        setVideos((current) => mergeVideoPages(current, page, allowRepeat))
       } catch {
         if (!alive) return
         hasMoreRef.current = false
@@ -1151,7 +1169,7 @@ function activeVideo() {
                     const index = from + offset
                     return (
                       <VideoSlide
-                        key={video.id}
+                        key={`${video.id}-${index}`}
                         video={video}
                         index={index}
                         active={index === active}

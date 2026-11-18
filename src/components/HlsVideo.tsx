@@ -36,6 +36,7 @@ export function HlsVideo({
   const onBufferingRef = useRef(onBuffering)
   const onProgressRef = useRef(onProgress)
   const onErrorRef = useRef(onError)
+  const playGenRef = useRef(0)
   const playRetryRef = useRef<number | null>(null)
   const [posterKey, setPosterKey] = useState(`${src}:${epoch}`)
   const [showPoster, setShowPoster] = useState(Boolean(poster))
@@ -54,32 +55,64 @@ export function HlsVideo({
     if (!active) setShowPoster(Boolean(poster))
   }, [active, paused, poster, onBuffering, onProgress, onError])
 
+  function clearPlayRetry() {
+    if (playRetryRef.current != null) {
+      window.clearTimeout(playRetryRef.current)
+      playRetryRef.current = null
+    }
+  }
+
+  function markPlaying() {
+    setShowPoster(false)
+    onBufferingRef.current(false)
+  }
+
+  function requestPlay(reason: string) {
+    const video = videoRef.current
+    if (!video) return
+    if (!activeRef.current || pausedRef.current) {
+      video.pause()
+      return
+    }
+
+    const gen = ++playGenRef.current
+    clearPlayRetry()
+    onBufferingRef.current(true)
+
+    const attempt = (n: number) => {
+      if (gen !== playGenRef.current) return
+      if (!activeRef.current || pausedRef.current) return
+      void video
+        .play()
+        .then(() => {
+          if (gen !== playGenRef.current) return
+          if (!activeRef.current || pausedRef.current) {
+            video.pause()
+            return
+          }
+          // play() 已成功时，有的环境不会再发 playing，不能只靠事件清 loading
+          markPlaying()
+        })
+        .catch(() => {
+          if (gen !== playGenRef.current) return
+          if (!activeRef.current || pausedRef.current) return
+          onBufferingRef.current(true)
+          if (n >= 5) return
+          playRetryRef.current = window.setTimeout(() => attempt(n + 1), 160 * (n + 1))
+        })
+    }
+
+    void reason
+    attempt(0)
+  }
+
   useEffect(() => {
     const video = videoRef.current
     if (!video || !preload) return
 
     let destroyed = false
     nativeRef.current = false
-    // 仅当前条需要 loading；邻条预载不要把状态提前清掉
     if (activeRef.current) onBufferingRef.current(true)
-
-    const playIfNeeded = () => {
-      if (!video || destroyed) return
-      if (!activeRef.current || pausedRef.current) {
-        video.pause()
-        return
-      }
-      onBufferingRef.current(true)
-      void video
-        .play()
-        .then(() => {
-          if (!activeRef.current || pausedRef.current) video.pause()
-        })
-        .catch(() => {
-          // 自动播放偶发 Abort/NotAllowed：保持 loading，稍后由 active effect 重试
-          if (activeRef.current && !pausedRef.current) onBufferingRef.current(true)
-        })
-    }
 
     const attach = async () => {
       const { default: HlsCtor, FetchLoader } = await import("hls.js")
@@ -88,7 +121,7 @@ export function HlsVideo({
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
           nativeRef.current = true
           video.src = src
-          playIfNeeded()
+          if (activeRef.current && !pausedRef.current) requestPlay("native")
           return
         }
         onErrorRef.current("当前浏览器不能播放 HLS")
@@ -96,7 +129,6 @@ export function HlsVideo({
       }
 
       let recovered = 0
-      // R2/CDN 会拦带 localhost Referer 的请求（403），用 fetch + no-referrer
       const player = new HlsCtor({
         enableWorker: false,
         loader: FetchLoader,
@@ -105,7 +137,6 @@ export function HlsVideo({
             ...init,
             referrerPolicy: "no-referrer",
           }),
-        // 先从最低档起播，出画后再自动升清晰度
         startLevel: 0,
         capLevelToPlayerSize: true,
         maxBufferLength: 8,
@@ -118,10 +149,12 @@ export function HlsVideo({
         if (playerRef.current === player) playerRef.current = null
         onErrorRef.current("视频加载失败")
       }
-      player.on(HlsCtor.Events.MANIFEST_PARSED, playIfNeeded)
+      player.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+        if (activeRef.current && !pausedRef.current) requestPlay("manifest")
+      })
       player.on(HlsCtor.Events.FRAG_BUFFERED, () => {
         if (!activeRef.current || pausedRef.current) return
-        if (!video.paused && video.readyState >= 2) onBufferingRef.current(false)
+        if (!video.paused && video.readyState >= 2) markPlaying()
       })
       player.on(HlsCtor.Events.ERROR, (_event, data) => {
         if (!data.fatal || playerRef.current !== player) return
@@ -142,16 +175,16 @@ export function HlsVideo({
 
     return () => {
       destroyed = true
-      if (playRetryRef.current != null) {
-        window.clearTimeout(playRetryRef.current)
-        playRetryRef.current = null
-      }
+      playGenRef.current += 1
+      clearPlayRetry()
       playerRef.current?.destroy()
       playerRef.current = null
       video.pause()
       video.removeAttribute("src")
       video.load()
     }
+    // requestPlay / markPlaying 用 ref，避免进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, preload, epoch])
 
   useEffect(() => {
@@ -163,56 +196,20 @@ export function HlsVideo({
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    if (playRetryRef.current != null) {
-      window.clearTimeout(playRetryRef.current)
-      playRetryRef.current = null
-    }
-
     if (!(active && !paused && preload)) {
+      playGenRef.current += 1
+      clearPlayRetry()
       video.pause()
       return
     }
-
-    // 滑到当前条：先显示 loading，直到真正 playing
-    onBufferingRef.current(true)
-    setShowPoster(Boolean(poster))
-
-    const tryPlay = (attempt: number) => {
-      if (!activeRef.current || pausedRef.current) return
-      void video
-        .play()
-        .then(() => {
-          if (!activeRef.current || pausedRef.current) video.pause()
-        })
-        .catch(() => {
-          if (!activeRef.current || pausedRef.current) return
-          onBufferingRef.current(true)
-          if (attempt >= 4) return
-          playRetryRef.current = window.setTimeout(() => tryPlay(attempt + 1), 180 * (attempt + 1))
-        })
-    }
-
-    tryPlay(0)
+    if (poster) setShowPoster(true)
+    requestPlay("active")
     return () => {
-      if (playRetryRef.current != null) {
-        window.clearTimeout(playRetryRef.current)
-        playRetryRef.current = null
-      }
+      playGenRef.current += 1
+      clearPlayRetry()
     }
-  }, [active, paused, preload, poster])
-
-  function markReady() {
-    const element = videoRef.current
-    if (!element) return
-    // 邻条预载完成时不要清 loading / 撕封面，否则滑过来会「只有一张图、没转圈、也不播」
-    if (!activeRef.current) return
-    if (element.readyState >= 2 || element.videoWidth > 0) {
-      if (!element.paused) {
-        setShowPoster(false)
-        onBufferingRef.current(false)
-      }
-    }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, paused, preload])
 
   return (
     <>
@@ -229,18 +226,14 @@ export function HlsVideo({
         preload={preload ? "auto" : "none"}
         disablePictureInPicture
         onContextMenu={(event) => event.preventDefault()}
-        onPlaying={() => {
-          setShowPoster(false)
-          onBufferingRef.current(false)
-        }}
-        onLoadedData={markReady}
-        onCanPlay={() => {
-          markReady()
-          if (activeRef.current && !pausedRef.current) {
-            void videoRef.current?.play().catch(() => {
-              if (activeRef.current && !pausedRef.current) onBufferingRef.current(true)
-            })
+        onPlaying={markPlaying}
+        onLoadedData={() => {
+          if (activeRef.current && !pausedRef.current && videoRef.current && videoRef.current.readyState >= 2) {
+            requestPlay("loadeddata")
           }
+        }}
+        onCanPlay={() => {
+          if (activeRef.current && !pausedRef.current) requestPlay("canplay")
         }}
         onWaiting={() => {
           if (activeRef.current && !pausedRef.current) onBufferingRef.current(true)
@@ -250,12 +243,12 @@ export function HlsVideo({
           if (video.duration && Number.isFinite(video.duration)) {
             onProgressRef.current(video.currentTime / video.duration)
           }
-          if (!video.paused && video.readyState >= 3) onBufferingRef.current(false)
+          if (!video.paused && video.readyState >= 2) markPlaying()
         }}
         onEnded={(event) => {
           const video = event.currentTarget
           video.currentTime = 0
-          if (activeRef.current && !pausedRef.current) void video.play().catch(() => {})
+          if (activeRef.current && !pausedRef.current) requestPlay("ended")
         }}
         onError={() => {
           if (nativeRef.current) onErrorRef.current("视频加载失败")

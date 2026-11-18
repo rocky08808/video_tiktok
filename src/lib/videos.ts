@@ -6,7 +6,8 @@ import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 type RawVideo = Partial<VideoItem> & { id?: string | number; src?: string }
 
 export const VIDEO_PAGE_SIZE = 40
-export const VIDEO_EXCLUDE_MAX = 300
+/** 单次 exclude 上限（整库去重一轮）；超出则截尾，一般够用 */
+export const VIDEO_EXCLUDE_MAX = 50_000
 /** 无 exclude 的首包可短缓存；带 exclude 的抽样不缓存 */
 export const VIDEO_FEED_CACHE_TTL_MS = 45_000
 

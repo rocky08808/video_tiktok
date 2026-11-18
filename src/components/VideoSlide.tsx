@@ -59,9 +59,9 @@ export function VideoSlide({
   }, [])
 
   useEffect(() => {
-    // 滑到当前条时先回到 loading，避免邻条预载把 buffering 提前清掉后「只有封面」
+    // 仅切到新条目时亮 loading；pause/resume 交给 HlsVideo，避免和 play 成功抢状态
     if (active && !paused && !failed) setBuffering(true)
-  }, [active, paused, failed, video.src])
+  }, [active, failed, video.src])
 
   function media() {
     return rootRef.current?.querySelector("video") ?? null
@@ -70,7 +70,12 @@ export function VideoSlide({
   function play() {
     const element = media()
     if (!element) return
-    void element.play().catch(() => {})
+    void element
+      .play()
+      .then(() => {
+        setBuffering(false)
+      })
+      .catch(() => {})
   }
 
   function pause() {
@@ -122,6 +127,12 @@ export function VideoSlide({
     if (paused) {
       play()
       onPausedChange(false)
+      return
+    }
+
+    // 卡在 loading 时，单击当作强制起播，不要先暂停
+    if (buffering) {
+      play()
       return
     }
 
