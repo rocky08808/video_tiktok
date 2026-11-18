@@ -49,7 +49,7 @@ NEXT_PUBLIC_R2_PUBLIC_BASE=https://pub-xxxxxxxx.r2.dev
 
 不想改代码时，把同样格式的 JSON 传到 R2，再设置 `R2_MANIFEST_URL`。示例见 `src/data/manifest.example.json`。
 
-暂时不能改 CORS 时，在 `.env.local` 加上 `HLS_PROXY=1`。页面会改走 `/api/hls`，由服务器去读 R2。流量会经过 Next，只适合开发和少量访问。
+本机调试若 R2 拦截 localhost Referer，在 `.env.local` 加 `HLS_PROXY=1`。生产请直连 R2 CDN（配好 CORS/Referer）；线上勿常规开代理，紧急才用 `HLS_PROXY=force`。
 
 ## 连接宝塔 MongoDB
 

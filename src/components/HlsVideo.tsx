@@ -99,6 +99,8 @@ export function HlsVideo({
             ...init,
             referrerPolicy: "no-referrer",
           }),
+        // 先从最低档起播，出画后再自动升清晰度
+        startLevel: 0,
         capLevelToPlayerSize: true,
         maxBufferLength: 8,
         maxMaxBufferLength: 12,

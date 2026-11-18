@@ -5,7 +5,14 @@ import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 
 type RawVideo = Partial<VideoItem> & { id?: string | number; src?: string }
 
-export async function getVideos(): Promise<VideoFeedResponse> {
+/** 进程内短缓存，减少每次打 Mongo */
+export const VIDEO_FEED_CACHE_TTL_MS = 45_000
+
+const globalCache = globalThis as typeof globalThis & {
+  skVideoFeedCache?: { at: number; value: VideoFeedResponse }
+}
+
+async function loadVideos(): Promise<VideoFeedResponse> {
   const envBase = publicBase()
   const manifestUrl = process.env.R2_MANIFEST_URL
 
@@ -61,6 +68,18 @@ export async function getVideos(): Promise<VideoFeedResponse> {
   }
 
   return { videos: demos, mode: "demo" }
+}
+
+export async function getVideos(): Promise<VideoFeedResponse> {
+  const hit = globalCache.skVideoFeedCache
+  if (hit && Date.now() - hit.at < VIDEO_FEED_CACHE_TTL_MS && hit.value.videos.length > 0) {
+    return hit.value
+  }
+  const value = await loadVideos()
+  if (value.videos.length > 0) {
+    globalCache.skVideoFeedCache = { at: Date.now(), value }
+  }
+  return value
 }
 
 function mapVideos(inputs: RawVideo[], base: string) {

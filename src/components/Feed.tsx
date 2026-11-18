@@ -302,10 +302,12 @@ export function Feed() {
     setLoading(true)
     void (async () => {
       try {
-        const settings = await fetchClientSettings()
+        const [settings, response] = await Promise.all([
+          fetchClientSettings(),
+          fetch("/api/videos", { signal: controller.signal }),
+        ])
         if (!alive) return
         setLimits({ ...settings })
-        const response = await fetch("/api/videos", { signal: controller.signal })
         const data = (await response.json()) as VideoFeedResponse
         if (!alive) return
         const all = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
