@@ -58,6 +58,11 @@ export function VideoSlide({
     }
   }, [])
 
+  useEffect(() => {
+    // 滑到当前条时先回到 loading，避免邻条预载把 buffering 提前清掉后「只有封面」
+    if (active && !paused && !failed) setBuffering(true)
+  }, [active, paused, failed, video.src])
+
   function media() {
     return rootRef.current?.querySelector("video") ?? null
   }
