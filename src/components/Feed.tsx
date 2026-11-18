@@ -833,6 +833,7 @@ function activeVideo() {
   }
 
   const showBanner = mode === "demo" && banner
+  const chromeHidden = headerHidden && !paused && !watchBlocked && !limitBlocked
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-[#1a1020] text-white">
       <div
@@ -903,10 +904,10 @@ function activeVideo() {
 
         <header
           className="feed-header pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]"
-          data-hidden={headerHidden ? "true" : "false"}
+          data-hidden={chromeHidden ? "true" : "false"}
           style={{
-            opacity: headerHidden ? 0 : 1,
-            transform: headerHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
+            opacity: chromeHidden ? 0 : 1,
+            transform: chromeHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
           }}
         >
           <button
@@ -961,10 +962,10 @@ function activeVideo() {
             type="button"
             aria-label="个人中心"
             className="feed-profile absolute right-4 bottom-[max(18px,env(safe-area-inset-bottom))] z-30 grid place-items-center pb-1"
-            data-hidden={headerHidden ? "true" : "false"}
+            data-hidden={chromeHidden ? "true" : "false"}
             style={{
-              opacity: headerHidden ? 0 : 1,
-              transform: headerHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+              opacity: chromeHidden ? 0 : 1,
+              transform: chromeHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
             }}
             onClick={() => setProfileOpen(true)}
           >
