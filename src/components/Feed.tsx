@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { AccountSheet, storeInviteCode } from "@/components/AccountSheet"
-import { IconFullscreen, IconUser, IconVolume } from "@/components/icons"
+import { IconFullscreen, IconToFirst, IconUser, IconVolume } from "@/components/icons"
 import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
@@ -25,6 +25,7 @@ type Tab = "forYou" | "saved"
 const SAVED_KEY = "sk_saved"
 const LIKED_KEY = "sk_liked"
 const LOOP_KEY = "sk_loop_one"
+const SAVED_CURSOR_KEY = "sk_saved_cursor"
 const VIDEO_SEEN_KEY = "sk_video_seen"
 const VIDEO_PAGE_SIZE = 40
 /** 与服务端一致：一轮内尽量排除整库已看过的 */
@@ -64,6 +65,54 @@ function writeVideoSeen(ids: string[]) {
   } catch {
     // quota / private mode
   }
+}
+
+function readSavedCursor() {
+  try {
+    const id = localStorage.getItem(SAVED_CURSOR_KEY)
+    return id && id.length > 0 ? id : null
+  } catch {
+    return null
+  }
+}
+
+function writeSavedCursor(id: string | null | undefined) {
+  try {
+    if (!id) {
+      localStorage.removeItem(SAVED_CURSOR_KEY)
+      return
+    }
+    localStorage.setItem(SAVED_CURSOR_KEY, id)
+  } catch {
+    // ignore
+  }
+}
+
+function findSavedIndex(items: VideoItem[], preferred?: string | null) {
+  const id = preferred ?? readSavedCursor()
+  if (id) {
+    const at = items.findIndex((video) => video.id === id)
+    if (at >= 0) return at
+  }
+  return 0
+}
+
+/** 按收藏 id 顺序定位（不依赖当前 feed list，避免切 tab 时还拿着推荐列表） */
+function findSavedIndexByIds(
+  ids: string[],
+  available: Set<string>,
+  preferred?: string | null,
+  fallback = 0,
+) {
+  const id = preferred ?? readSavedCursor()
+  if (!id) return Math.max(0, fallback)
+  let index = 0
+  for (const item of ids) {
+    if (!available.has(item)) continue
+    if (item === id) return index
+    index += 1
+  }
+  return Math.max(0, fallback)
 }
 
 function mergeVideoPages(current: VideoItem[], incoming: VideoItem[], allowRepeat: boolean) {
@@ -180,6 +229,8 @@ export function Feed() {
   const stageRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef(0)
   const forYouIndex = useRef(0)
+  const savedIndex = useRef(0)
+  const savedRestoreRef = useRef(true)
   const [videos, setVideos] = useState<VideoItem[]>([])
   /** 收藏专用目录，不并入推荐流，避免刷到一堆收藏 */
   const [savedCatalog, setSavedCatalog] = useState<VideoItem[]>([])
@@ -249,6 +300,11 @@ export function Feed() {
   useEffect(() => {
     activeRef.current = active
     if (tab === "forYou") forYouIndex.current = active
+    if (tab === "saved") {
+      savedIndex.current = active
+      const id = listRef.current[active]?.id
+      if (id) writeSavedCursor(id)
+    }
     pausedRef.current = paused
     mutedRef.current = muted
     profileRef.current = profileOpen || vipOpen || picsOpen
@@ -1144,7 +1200,23 @@ function activeVideo() {
   function selectTab(next: Tab) {
     if (next === tab) return
     if (tab === "forYou") forYouIndex.current = activeRef.current
-    const index = next === "forYou" ? forYouIndex.current : 0
+    else {
+      savedIndex.current = activeRef.current
+      const id = listRef.current[activeRef.current]?.id
+      if (id) writeSavedCursor(id)
+    }
+    let index = 0
+    if (next === "forYou") {
+      index = forYouIndex.current
+    } else {
+      savedRestoreRef.current = true
+      const available = new Set<string>([
+        ...videos.map((video) => video.id),
+        ...savedCatalog.map((video) => video.id),
+      ])
+      index = findSavedIndexByIds(savedIds, available, readSavedCursor(), savedIndex.current)
+      savedIndex.current = index
+    }
     activeRef.current = index
     applyHeaderHidden(false)
     setTab(next)
@@ -1155,20 +1227,55 @@ function activeVideo() {
   useLayoutEffect(() => {
     const root = scrollerRef.current
     if (!root || root.clientHeight === 0) return
-    const count = root.querySelectorAll("[data-index]").length
-    const index = tab === "forYou" ? Math.min(forYouIndex.current, Math.max(0, count - 1)) : 0
+    // 虚拟窗口只有附近几条 DOM，不能用 [data-index] 数量夹索引
+    const max = Math.max(0, listRef.current.length - 1)
+    const index =
+      tab === "forYou"
+        ? Math.min(forYouIndex.current, max)
+        : Math.min(savedIndex.current, max)
     activeRef.current = index
     root.scrollTop = index * root.clientHeight
   }, [tab])
 
   useEffect(() => {
-    if (tab !== "saved" || list.length === 0 || activeRef.current < list.length) return
+    if (tab !== "saved" || list.length === 0) return
+    if (savedRestoreRef.current) {
+      const cursor = readSavedCursor()
+      const index = findSavedIndex(list, cursor)
+      // 目标还没进 catalog 时先等 lookup
+      if (cursor && list[index]?.id !== cursor) return
+      savedRestoreRef.current = false
+      if (index !== activeRef.current) {
+        activeRef.current = index
+        savedIndex.current = index
+        setActive(index)
+      }
+      const root = scrollerRef.current
+      if (root && root.clientHeight > 0) root.scrollTo({ top: index * root.clientHeight })
+      return
+    }
+    if (activeRef.current < list.length) return
     const index = list.length - 1
     const root = scrollerRef.current
     activeRef.current = index
+    savedIndex.current = index
     setActive(index)
     if (root && root.clientHeight > 0) root.scrollTo({ top: index * root.clientHeight })
-  }, [list.length, tab])
+  }, [list, tab])
+
+  function jumpSavedToFirst() {
+    if (tab !== "saved" || list.length === 0) return
+    const first = list[0]
+    if (!first) return
+    activeRef.current = 0
+    savedIndex.current = 0
+    writeSavedCursor(first.id)
+    setActive(0)
+    applyHeaderHidden(false)
+    setPaused(false)
+    const root = scrollerRef.current
+    if (root && root.clientHeight > 0) root.scrollTo({ top: 0 })
+  }
 
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === stageRef.current)
@@ -1360,7 +1467,7 @@ function activeVideo() {
 
         {!loading && tab === "saved" && user?.vip && list.length > 0 && (
           <div
-            className="feed-profile pointer-events-none absolute left-4 bottom-[max(22px,env(safe-area-inset-bottom))] z-30 pb-1"
+            className="feed-profile pointer-events-none absolute left-4 bottom-[max(22px,env(safe-area-inset-bottom))] z-30 flex items-center gap-2 pb-1"
             data-hidden={chromeHidden ? "true" : "false"}
             style={{
               opacity: chromeHidden ? 0 : 1,
@@ -1371,6 +1478,16 @@ function activeVideo() {
             <p className="text-shadow text-[13px] font-semibold tracking-wide text-white/90">
               {Math.min(list.length, Math.max(1, active + 1))} / {list.length}
             </p>
+            {active > 0 ? (
+              <button
+                type="button"
+                className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full bg-black/35 ring-1 ring-white/25 backdrop-blur-sm"
+                aria-label="回到第一条"
+                onClick={jumpSavedToFirst}
+              >
+                <IconToFirst />
+              </button>
+            ) : null}
           </div>
         )}
 

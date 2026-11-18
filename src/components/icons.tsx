@@ -182,3 +182,19 @@ export function IconCheck({ className = "h-2.5 w-2.5" }: IconProps) {
     </svg>
   )
 }
+
+/** 回到列表第一条 */
+export function IconToFirst({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none">
+      <path d="M6 5.5h12" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d="M12 19.2V9.2M8.2 12.6 12 8.8l3.8 3.8"
+        stroke="#fff"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
