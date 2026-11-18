@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { storeInviteCode } from "@/components/AccountSheet"
+import { BrandLogo } from "@/components/BrandLogo"
 import { fetchClientSettings } from "@/lib/client-settings"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import {
@@ -199,7 +200,10 @@ export default function VipPage() {
           ref={mainRef}
           className="relative z-10 min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-5 [-webkit-overflow-scrolling:touch]"
         >
-          <p className="text-center text-[12px] font-medium tracking-[0.28em] text-white/40">瞬看</p>
+          <div className="flex flex-col items-center gap-2.5">
+            <BrandLogo className="h-12 w-12" />
+            <p className="text-[12px] font-medium tracking-[0.28em] text-white/40">瞬看</p>
+          </div>
           <p className="mt-3 text-center text-[42px] font-semibold leading-none tracking-tight">
             {formatVipAmount(amount)}
             <span className="ml-2 align-middle text-[15px] font-medium tracking-normal text-white/50">

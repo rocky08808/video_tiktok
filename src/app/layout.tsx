@@ -38,6 +38,9 @@ export const metadata: Metadata = {
         canonical: "/",
       }
     : undefined,
+  icons: {
+    icon: [{ url: "/logo.svg", type: "image/svg+xml" }],
+  },
   openGraph: {
     type: "website",
     locale: "zh_CN",
@@ -45,11 +48,13 @@ export const metadata: Metadata = {
     title: `${SITE_NAME} · ${SITE_TAGLINE}`,
     description: SITE_DESCRIPTION,
     url: origin || undefined,
+    images: [{ url: "/logo.svg", width: 128, height: 128, alt: SITE_NAME }],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: `${SITE_NAME} · ${SITE_TAGLINE}`,
     description: SITE_DESCRIPTION,
+    images: ["/logo.svg"],
   },
   category: "entertainment",
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useState, type FormEvent } from "react"
+import { BrandLogo } from "@/components/BrandLogo"
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -57,7 +58,10 @@ export default function AdminLoginPage() {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-5 py-10">
-      <p className="text-center text-[12px] font-medium tracking-[0.28em] text-white/35">瞬看</p>
+      <div className="flex flex-col items-center gap-2.5">
+        <BrandLogo className="h-12 w-12" />
+        <p className="text-[12px] font-medium tracking-[0.28em] text-white/35">瞬看</p>
+      </div>
       <h1 className="mt-3 text-center text-2xl font-semibold tracking-tight">管理后台</h1>
       <p className="mt-2 text-center text-sm text-white/45">使用管理账号登录</p>
 
