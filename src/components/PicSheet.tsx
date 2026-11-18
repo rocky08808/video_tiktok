@@ -235,7 +235,7 @@ export function PicSheet({
     })
   }
 
-  async function hydrateCounts(list: PicItem[]) {
+  async function hydrateCounts(list: PackedPic[]) {
     if (list.length === 0) return
     try {
       const response = await fetch("/api/pics/lookup", {
