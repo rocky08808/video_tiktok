@@ -23,6 +23,30 @@ type Tab = "forYou" | "saved"
 
 const SAVED_KEY = "sk_saved"
 const LIKED_KEY = "sk_liked"
+const VIDEO_PAGE_SIZE = 40
+const VIDEO_EXCLUDE_MAX = 300
+const LOAD_MORE_REMAINING = 8
+
+type VideosPageResponse = VideoFeedResponse & { hasMore?: boolean }
+
+function rememberSeen(seen: string[], ids: string[]) {
+  const next = [...seen]
+  for (const id of ids) {
+    if (!id) continue
+    const at = next.indexOf(id)
+    if (at >= 0) next.splice(at, 1)
+    next.push(id)
+  }
+  if (next.length > VIDEO_EXCLUDE_MAX) next.splice(0, next.length - VIDEO_EXCLUDE_MAX)
+  return next
+}
+
+function mergeVideoPages(current: VideoItem[], incoming: VideoItem[]) {
+  if (incoming.length === 0) return current
+  const have = new Set(current.map((video) => video.id))
+  const extra = incoming.filter((video) => !have.has(video.id))
+  return extra.length === 0 ? current : [...current, ...extra]
+}
 
 function readLocalIds(key: string) {
   try {
@@ -160,6 +184,8 @@ export function Feed() {
   const [watchBlocked, setWatchBlocked] = useState(false)
   const [headerHidden, setHeaderHidden] = useState(false)
   const [limits, setLimits] = useState(DEFAULT_APP_SETTINGS)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
   const picsRef = useRef(false)
@@ -174,6 +200,10 @@ export function Feed() {
   })
   const savedSeq = useRef(0)
   const likedSeq = useRef(0)
+  const seenIdsRef = useRef<string[]>([])
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
+  const fetchedSavedRef = useRef(new Set<string>())
   profileRef.current = profileOpen || vipOpen || picsOpen
   vipRef.current = vipOpen
   picsRef.current = picsOpen
@@ -304,15 +334,18 @@ export function Feed() {
       try {
         const [settings, response] = await Promise.all([
           fetchClientSettings(),
-          fetch("/api/videos", { signal: controller.signal }),
+          fetch(`/api/videos?limit=${VIDEO_PAGE_SIZE}`, { signal: controller.signal }),
         ])
         if (!alive) return
         setLimits({ ...settings })
-        const data = (await response.json()) as VideoFeedResponse
+        const data = (await response.json()) as VideosPageResponse
         if (!alive) return
-        const all = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
-        ensureFreePackIds(all.map((video) => video.id))
-        setVideos(all)
+        const page = applyCountFixes(shuffle(data.videos ?? []), countFixes.current)
+        ensureFreePackIds(page.map((video) => video.id))
+        seenIdsRef.current = rememberSeen([], page.map((video) => video.id))
+        hasMoreRef.current = data.hasMore !== false && page.length >= VIDEO_PAGE_SIZE
+        setHasMore(hasMoreRef.current)
+        setVideos(page)
         setMode(data.mode)
         setError(data.error ?? null)
         setLoading(false)
@@ -328,6 +361,96 @@ export function Feed() {
       controller.abort()
     }
   }, [])
+
+  useEffect(() => {
+    if (tab !== "forYou" || !user?.vip) return
+    if (!hasMoreRef.current || loadingMoreRef.current) return
+    if (list.length === 0) return
+    if (list.length - active > LOAD_MORE_REMAINING) return
+
+    let alive = true
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    void (async () => {
+      try {
+        const response = await fetch("/api/videos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            limit: VIDEO_PAGE_SIZE,
+            exclude: seenIdsRef.current.slice(-VIDEO_EXCLUDE_MAX),
+          }),
+        })
+        if (!alive) return
+        const data = (await response.json()) as VideosPageResponse
+        if (!alive) return
+        const page = applyCountFixes(data.videos ?? [], countFixes.current)
+        seenIdsRef.current = rememberSeen(
+          seenIdsRef.current,
+          page.map((video) => video.id),
+        )
+        if (page.length > 0) {
+          const more = data.hasMore !== false && page.length >= VIDEO_PAGE_SIZE
+          hasMoreRef.current = more
+          setHasMore(more)
+          setVideos((current) => mergeVideoPages(current, page))
+        } else {
+          hasMoreRef.current = false
+          setHasMore(false)
+        }
+      } catch {
+        if (!alive) return
+        hasMoreRef.current = false
+        setHasMore(false)
+      } finally {
+        loadingMoreRef.current = false
+        if (alive) setLoadingMore(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [active, hasMore, list.length, tab, user?.vip])
+
+  useEffect(() => {
+    if (!user?.vip || savedIds.length === 0) return
+    const have = new Set(videos.map((video) => video.id))
+    const missing = savedIds.filter((id) => !have.has(id) && !fetchedSavedRef.current.has(id))
+    if (missing.length === 0) return
+
+    const batch = missing.slice(0, VIDEO_EXCLUDE_MAX)
+    for (const id of batch) fetchedSavedRef.current.add(id)
+
+    let alive = true
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const response = await fetch("/api/videos/lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: batch }),
+          signal: controller.signal,
+        })
+        if (!alive) return
+        const data = (await response.json()) as { videos?: VideoItem[] }
+        if (!alive) return
+        const found = applyCountFixes(data.videos ?? [], countFixes.current)
+        if (found.length === 0) return
+        setVideos((current) => {
+          const map = new Map(current.map((video) => [video.id, video]))
+          for (const video of found) map.set(video.id, video)
+          return [...map.values()]
+        })
+      } catch (reason: unknown) {
+        if (reason instanceof DOMException && reason.name === "AbortError") return
+        for (const id of batch) fetchedSavedRef.current.delete(id)
+      }
+    })()
+    return () => {
+      alive = false
+      controller.abort()
+    }
+  }, [savedIds, user?.vip, videos])
 
   useEffect(() => {
     try {
@@ -923,6 +1046,10 @@ function activeVideo() {
                   {user ? "开通 VIP" : "去登录"}
                 </button>
               </div>
+            </div>
+          ) : list.length === 0 && tab === "saved" && user?.vip && savedIds.length > 0 ? (
+            <div className="feed-slide grid place-items-center">
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white" />
             </div>
           ) : list.length === 0 ? (
             <div className="feed-slide grid place-items-center px-8 text-center">

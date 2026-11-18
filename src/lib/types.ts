@@ -19,4 +19,5 @@ export type VideoFeedResponse = {
   mode: "r2" | "demo"
   base?: string
   error?: string
+  hasMore?: boolean
 }

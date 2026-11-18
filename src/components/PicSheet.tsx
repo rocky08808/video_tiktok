@@ -9,12 +9,42 @@ import { freePicLimit, readFreePicPack, writeFreePicPack, type PackedPic } from 
 const VIP_SESSION_KEY = "sk_pics_vip"
 const LIKED_PIC_KEY = "sk_pic_liked"
 const SAVED_PIC_KEY = "sk_pic_saved"
+const PIC_PAGE_SIZE = 40
+const PIC_EXCLUDE_MAX = 300
+const LOAD_MORE_REMAINING = 8
 
 type PicItem = PackedPic & { likes: number; bookmarks: number }
 
 type VipSessionCache = {
   pics: PicItem[]
   index: number
+  seenIds?: string[]
+}
+
+type PicsPageResponse = {
+  pics?: PackedPic[]
+  limited?: boolean
+  hasMore?: boolean
+  error?: string
+}
+
+function rememberSeen(seen: string[], ids: string[]) {
+  const next = [...seen]
+  for (const id of ids) {
+    if (!id) continue
+    const at = next.indexOf(id)
+    if (at >= 0) next.splice(at, 1)
+    next.push(id)
+  }
+  if (next.length > PIC_EXCLUDE_MAX) next.splice(0, next.length - PIC_EXCLUDE_MAX)
+  return next
+}
+
+function mergePicPages(current: PicItem[], incoming: PicItem[]) {
+  if (incoming.length === 0) return current
+  const have = new Set(current.map((pic) => pic.id))
+  const extra = incoming.filter((pic) => !have.has(pic.id))
+  return extra.length === 0 ? current : [...current, ...extra]
 }
 
 function normalizePic(item: PackedPic): PicItem {
@@ -57,18 +87,26 @@ function readVipSession(): VipSessionCache | null {
       .map(normalizePic)
     if (pics.length === 0) return null
     const index = Math.min(pics.length - 1, Math.max(0, Number(parsed.index) || 0))
-    return { pics, index }
+    const seenIds = Array.isArray(parsed.seenIds)
+      ? parsed.seenIds.filter((id): id is string => typeof id === "string")
+      : pics.map((pic) => pic.id)
+    return { pics, index, seenIds: rememberSeen([], seenIds) }
   } catch {
     return null
   }
 }
 
-function writeVipSession(pics: PicItem[], index: number) {
+function writeVipSession(pics: PicItem[], index: number, seenIds?: string[]) {
   try {
     const safeIndex = Math.min(pics.length - 1, Math.max(0, index))
+    const seen = rememberSeen([], seenIds && seenIds.length > 0 ? seenIds : pics.map((pic) => pic.id))
     sessionStorage.setItem(
       VIP_SESSION_KEY,
-      JSON.stringify({ pics, index: Number.isFinite(safeIndex) ? safeIndex : 0 } satisfies VipSessionCache),
+      JSON.stringify({
+        pics,
+        index: Number.isFinite(safeIndex) ? safeIndex : 0,
+        seenIds: seen,
+      } satisfies VipSessionCache),
     )
   } catch {
     // ignore
@@ -120,6 +158,7 @@ export function PicSheet({
   const [savedListLoading, setSavedListLoading] = useState(false)
   const [savedListError, setSavedListError] = useState<string | null>(null)
   const [browsingSaved, setBrowsingSaved] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const indexRef = useRef(0)
   const headerHiddenRef = useRef(false)
@@ -129,6 +168,9 @@ export function PicSheet({
   const savedSeq = useRef(0)
   const suppressTap = useRef(false)
   const feedBackup = useRef<{ pics: PicItem[]; index: number } | null>(null)
+  const seenIdsRef = useRef<string[]>([])
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
 
   indexRef.current = index
   const current = pics[index] ?? null
@@ -143,13 +185,15 @@ export function PicSheet({
 
   function persist(next: PicItem[], nextIndex: number) {
     if (browsingSaved) return
-    if (vip) writeVipSession(next, nextIndex)
+    if (vip) writeVipSession(next, nextIndex, seenIdsRef.current)
     else writeFreePicPack(next, nextIndex)
   }
 
-  function applyPics(next: PackedPic[], nextIndex: number, nextLimited: boolean) {
+  function applyPics(next: PackedPic[], nextIndex: number, nextLimited: boolean, seenIds?: string[]) {
     const normalized = next.map(normalizePic)
     const safeIndex = Math.min(normalized.length - 1, Math.max(0, nextIndex))
+    if (seenIds) seenIdsRef.current = rememberSeen([], seenIds)
+    else seenIdsRef.current = rememberSeen(seenIdsRef.current, normalized.map((pic) => pic.id))
     setLimited(nextLimited)
     setPics(normalized)
     setIndex(safeIndex)
@@ -270,7 +314,10 @@ export function PicSheet({
         const cached = readVipSession()
         if (cached) {
           setError(null)
-          applyPics(cached.pics, cached.index, false)
+          seenIdsRef.current = rememberSeen([], cached.seenIds ?? cached.pics.map((pic) => pic.id))
+          hasMoreRef.current = true
+          setHasMore(true)
+          applyPics(cached.pics, cached.index, false, seenIdsRef.current)
           setLoading(false)
           void hydrateCounts(cached.pics)
           return
@@ -279,7 +326,10 @@ export function PicSheet({
         const cached = readFreePicPack()
         if (cached) {
           setError(null)
-          applyPics(cached.pics, cached.index, true)
+          seenIdsRef.current = rememberSeen([], cached.pics.map((pic) => pic.id))
+          hasMoreRef.current = false
+          setHasMore(false)
+          applyPics(cached.pics, cached.index, true, seenIdsRef.current)
           setLoading(false)
           void hydrateCounts(cached.pics)
           return
@@ -291,12 +341,16 @@ export function PicSheet({
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch("/api/pics")
-      const data = (await response.json()) as {
-        pics?: PackedPic[]
-        limited?: boolean
-        error?: string
-      }
+      const exclude = force && vip ? seenIdsRef.current.slice(-PIC_EXCLUDE_MAX) : []
+      const response =
+        exclude.length > 0
+          ? await fetch("/api/pics", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ limit: PIC_PAGE_SIZE, exclude }),
+            })
+          : await fetch(`/api/pics?limit=${vip ? PIC_PAGE_SIZE : freePicLimit()}`)
+      const data = (await response.json()) as PicsPageResponse
       if (id !== requestId.current) return
       const next = Array.isArray(data.pics) ? data.pics : []
       const nextLimited = !vip
@@ -306,11 +360,22 @@ export function PicSheet({
         return
       }
       if (next.length === 0) {
-        setError("暂时没有美图")
-        setPics([])
+        setError(force ? "暂时没有更多美图" : "暂时没有美图")
+        if (!force) setPics([])
+        hasMoreRef.current = false
+        setHasMore(false)
         return
       }
-      applyPics(next, 0, nextLimited)
+      const pageIds = next.map((pic) => pic.id)
+      const nextSeen = force
+        ? rememberSeen(seenIdsRef.current, pageIds)
+        : rememberSeen([], pageIds)
+      seenIdsRef.current = nextSeen
+      // 非 VIP 当天固定额度；VIP 按 hasMore / 页长继续滑
+      const more = vip && data.hasMore !== false && next.length >= PIC_PAGE_SIZE
+      hasMoreRef.current = more
+      setHasMore(more)
+      applyPics(next, 0, nextLimited, nextSeen)
     } catch {
       if (id !== requestId.current) return
       setError("网络不好，稍后再试")
@@ -391,6 +456,58 @@ export function PicSheet({
     restorePending.current = false
     root.scrollTop = indexRef.current * root.clientHeight
   }, [open, pics])
+
+  useEffect(() => {
+    if (!open || !vip || browsingSaved) return
+    if (!hasMoreRef.current || loadingMoreRef.current) return
+    if (pics.length === 0) return
+    if (pics.length - index > LOAD_MORE_REMAINING) return
+
+    let alive = true
+    loadingMoreRef.current = true
+    void (async () => {
+      try {
+        const response = await fetch("/api/pics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            limit: PIC_PAGE_SIZE,
+            exclude: seenIdsRef.current.slice(-PIC_EXCLUDE_MAX),
+          }),
+        })
+        if (!alive) return
+        const data = (await response.json()) as PicsPageResponse
+        if (!alive) return
+        const page = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
+        seenIdsRef.current = rememberSeen(
+          seenIdsRef.current,
+          page.map((pic) => pic.id),
+        )
+        if (page.length > 0) {
+          const more = data.hasMore !== false && page.length >= PIC_PAGE_SIZE
+          hasMoreRef.current = more
+          setHasMore(more)
+          setPics((current) => {
+            const merged = mergePicPages(current, page)
+            persist(merged, indexRef.current)
+            return merged
+          })
+        } else {
+          hasMoreRef.current = false
+          setHasMore(false)
+        }
+      } catch {
+        if (!alive) return
+        hasMoreRef.current = false
+        setHasMore(false)
+      } finally {
+        loadingMoreRef.current = false
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [open, vip, browsingSaved, index, pics.length, hasMore])
 
   function onScroll() {
     const root = scrollerRef.current
