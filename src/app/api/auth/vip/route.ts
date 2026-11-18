@@ -1,23 +1,17 @@
 import { connection } from "next/server"
 import { confirmVipPayment, currentUser, ensurePendingVipOrder } from "@/lib/auth"
-import { getAppSettings } from "@/lib/app-settings"
 import { describeMongoError } from "@/lib/mongo"
-import { vipUsdtAddress } from "@/lib/vip"
 
 export async function GET() {
   await connection()
   const user = await currentUser()
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
-  const { vipPriceUsdt } = await getAppSettings()
-  if (user.vip) {
-    return Response.json(
-      { vip: true, amount: vipPriceUsdt, address: vipUsdtAddress() },
-      { headers: { "Cache-Control": "no-store" } },
-    )
-  }
   try {
     const order = await ensurePendingVipOrder(user.username)
-    return Response.json({ vip: false, ...order }, { headers: { "Cache-Control": "no-store" } })
+    return Response.json(
+      { vip: user.vip, vipUntil: user.vipUntil, ...order },
+      { headers: { "Cache-Control": "no-store" } },
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : ""
     if (message.includes("缺少收款地址")) {
@@ -31,10 +25,6 @@ export async function POST() {
   await connection()
   const user = await currentUser()
   if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
-  if (user.vip) {
-    const { vipPriceUsdt } = await getAppSettings()
-    return Response.json({ vip: true, amount: vipPriceUsdt }, { headers: { "Cache-Control": "no-store" } })
-  }
   try {
     await ensurePendingVipOrder(user.username)
     const result = await confirmVipPayment(user.username)
@@ -44,8 +34,15 @@ export async function POST() {
         { status: 402 },
       )
     }
+    const refreshed = await currentUser()
     return Response.json(
-      { vip: true, amount: result.amount, txId: result.txId, orderId: result.orderId },
+      {
+        vip: true,
+        vipUntil: refreshed?.vipUntil ?? null,
+        amount: result.amount,
+        txId: result.txId,
+        orderId: result.orderId,
+      },
       { headers: { "Cache-Control": "no-store" } },
     )
   } catch (error) {

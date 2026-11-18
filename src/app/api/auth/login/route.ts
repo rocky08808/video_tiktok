@@ -1,5 +1,5 @@
 import { connection } from "next/server"
-import { ensureAuthCollections, openSession, readCredentials, verifyPassword } from "@/lib/auth"
+import { currentUser, ensureAuthCollections, openSession, readCredentials, verifyPassword } from "@/lib/auth"
 import { describeMongoError, getUsersCollection } from "@/lib/mongo"
 
 export async function POST(request: Request) {
@@ -25,7 +25,19 @@ export async function POST(request: Request) {
       return Response.json({ error: "用户名或密码不对" }, { status: 401 })
     }
     await openSession(username)
-    return Response.json({ username, vip: user?.vip === true }, { headers: { "Cache-Control": "no-store" } })
+    const me = await currentUser()
+    return Response.json(
+      {
+        username,
+        vip: me?.vip === true,
+        vipUntil: me?.vipUntil ?? null,
+        inviteCode: me?.inviteCode ?? null,
+        inviteCount: me?.inviteCount ?? 0,
+        inviteVipCount: me?.inviteVipCount ?? 0,
+        inviteNeed: me?.inviteNeed,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    )
   } catch (error) {
     return Response.json({ error: describeMongoError(error) }, { status: 503 })
   }

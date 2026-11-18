@@ -8,7 +8,9 @@ import { fetchClientSettings } from "@/lib/client-settings"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import {
   formatVipAmount,
+  formatVipUntilLabel,
   tgSupportUrl,
+  VIP_DURATION_DAYS,
   VIP_NETWORK,
   vipSupportMessage,
   vipUsdtAddress,
@@ -19,6 +21,7 @@ export default function VipPage() {
   const supportBase = tgSupportUrl()
   const [username, setUsername] = useState<string | null>(null)
   const [vip, setVip] = useState(false)
+  const [vipUntil, setVipUntil] = useState<string | null>(null)
   const [amount, setAmount] = useState(DEFAULT_APP_SETTINGS.vipPriceUsdt)
   const [address, setAddress] = useState(fallbackAddress)
   const [inviteCode, setInviteCode] = useState<string | null>(null)
@@ -98,6 +101,7 @@ export default function VipPage() {
           response.json() as Promise<{
             username?: string | null
             vip?: boolean
+            vipUntil?: string | null
             inviteCode?: string | null
             inviteCount?: number
             inviteVipCount?: number
@@ -113,15 +117,13 @@ export default function VipPage() {
         setInviteNeed(
           typeof data.inviteNeed === "number" ? data.inviteNeed : DEFAULT_APP_SETTINGS.inviteNeed,
         )
-        if (data.vip === true) {
-          setVip(true)
-          setDone(true)
-          return
-        }
+        setVip(data.vip === true)
+        setVipUntil(typeof data.vipUntil === "string" ? data.vipUntil : null)
         if (!name) return
         const orderResponse = await fetch("/api/auth/vip", { signal: controller.signal })
         const order = (await orderResponse.json()) as {
           vip?: boolean
+          vipUntil?: string | null
           amount?: number
           address?: string
           error?: string
@@ -132,8 +134,7 @@ export default function VipPage() {
         }
         if (order.vip) {
           setVip(true)
-          setDone(true)
-          return
+          if (typeof order.vipUntil === "string") setVipUntil(order.vipUntil)
         }
         if (typeof order.amount === "number") setAmount(order.amount)
         if (typeof order.address === "string" && order.address) setAddress(order.address)
@@ -159,7 +160,7 @@ export default function VipPage() {
   }
 
   async function confirmPay() {
-    if (pending || vip) return
+    if (pending) return
     if (!username) {
       setError("请先登录")
       return
@@ -168,13 +169,19 @@ export default function VipPage() {
     setError(null)
     try {
       const response = await fetch("/api/auth/vip", { method: "POST" })
-      const data = (await response.json()) as { vip?: boolean; amount?: number; error?: string }
+      const data = (await response.json()) as {
+        vip?: boolean
+        vipUntil?: string | null
+        amount?: number
+        error?: string
+      }
       if (typeof data.amount === "number") setAmount(data.amount)
       if (!response.ok || !data.vip) {
         setError(data.error || "开通失败")
         return
       }
       setVip(true)
+      if (typeof data.vipUntil === "string") setVipUntil(data.vipUntil)
       setDone(true)
     } catch {
       setError("网络不好，稍后再试")
@@ -183,7 +190,14 @@ export default function VipPage() {
     }
   }
 
-  const inviteProgress = Math.min(1, inviteNeed > 0 ? inviteVipCount / inviteNeed : 0)
+  const batchProgress = inviteNeed > 0 ? inviteVipCount % inviteNeed : 0
+  const inviteProgress = Math.min(
+    1,
+    inviteNeed > 0 ? (vip ? batchProgress / inviteNeed : inviteVipCount / inviteNeed) : 0,
+  )
+  const vipUntilLabel = formatVipUntilLabel(vipUntil)
+  const remainForBatch =
+    inviteNeed > 0 ? (batchProgress === 0 ? inviteNeed : inviteNeed - batchProgress) : 0
 
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-[#120e16] text-white">
@@ -192,7 +206,9 @@ export default function VipPage() {
           <Link href="/" className="grid h-10 w-10 place-items-center text-white/70" aria-label="返回">
             ←
           </Link>
-          <h1 className="text-sm font-medium tracking-wide text-white/90">开通 VIP</h1>
+          <h1 className="text-sm font-medium tracking-wide text-white/90">
+            {vip ? "续费 VIP" : "开通 VIP"}
+          </h1>
           <span className="w-10" />
         </header>
 
@@ -211,6 +227,9 @@ export default function VipPage() {
             </span>
           </p>
           <p className="mt-3 text-center text-[13px] text-white/50">无限观看 · 可收藏 · 无限美图</p>
+          {vip && vipUntilLabel && !done && (
+            <p className="mt-2 text-center text-[12px] text-[#25f4ee]/90">当前 VIP 至 {vipUntilLabel}</p>
+          )}
 
           {loading ? (
             <div className="mt-20 grid place-items-center pb-8">
@@ -219,9 +238,13 @@ export default function VipPage() {
           ) : done ? (
             <div className="mt-14 flex flex-col items-center pb-8">
               <p className="rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-3 py-1 text-xs font-semibold">
-                已开通
+                {vipUntilLabel ? `已开通至 ${vipUntilLabel}` : "已开通"}
               </p>
-              <p className="mt-4 text-sm text-white/55">无限观看、收藏，美图也全部开放了</p>
+              <p className="mt-4 text-sm text-white/55">
+                {vipUntilLabel
+                  ? `无限观看、收藏，美图已开放 · 有效期至 ${vipUntilLabel}`
+                  : "无限观看、收藏，美图也全部开放了"}
+              </p>
               <Link
                 href="/"
                 className="mt-10 grid h-12 w-full place-items-center rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
@@ -259,14 +282,20 @@ export default function VipPage() {
                   <div>
                     <p className="text-[15px] font-semibold">免费升级</p>
                     <p className="mt-1 text-[12px] leading-relaxed text-white/45">
-                      邀请 {inviteNeed} 人开通 VIP 即可免费获得
+                      {vip
+                        ? `每满 ${inviteNeed} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
+                        : `邀请 ${inviteNeed} 人开通 VIP 即可免费获得`}
                     </p>
                   </div>
-                  {inviteVipCount >= inviteNeed && (
+                  {vip ? (
+                    <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
+                      可叠加
+                    </span>
+                  ) : inviteVipCount >= inviteNeed ? (
                     <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
                       已达成
                     </span>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="relative mt-3.5 grid grid-cols-2 gap-2">
@@ -290,14 +319,20 @@ export default function VipPage() {
                   <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
-                      style={{ width: `${inviteProgress * 100}%` }}
+                      style={{
+                        width: `${(vip && batchProgress === 0 && inviteVipCount > 0 ? 1 : inviteProgress) * 100}%`,
+                      }}
                     />
                   </div>
                   <p className="mt-2 text-[11px] text-white/35">
                     {username
-                      ? inviteVipCount >= inviteNeed
-                        ? "邀请奖励已解锁"
-                        : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`
+                      ? vip
+                        ? batchProgress === 0 && inviteVipCount > 0
+                          ? `本轮已满，已叠加 ${VIP_DURATION_DAYS} 天`
+                          : `再邀 ${remainForBatch} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
+                        : inviteVipCount >= inviteNeed
+                          ? "邀请奖励已解锁"
+                          : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`
                       : "登录后可查看邀请进度并复制链接"}
                   </p>
                 </div>
@@ -434,7 +469,11 @@ export default function VipPage() {
                   disabled={pending || !address}
                   onClick={() => void confirmPay()}
                 >
-                  {pending ? "正在查链…" : "我已转账，确认开通"}
+                  {pending
+                    ? "正在查链…"
+                    : vip
+                      ? `我已转账，确认续费 +${VIP_DURATION_DAYS} 天`
+                      : "我已转账，确认开通"}
                 </button>
                 {supportHref && (
                   <a

@@ -12,6 +12,7 @@ export async function GET() {
       {
         username: user?.username ?? null,
         vip: user?.vip ?? false,
+        vipUntil: user?.vipUntil ?? null,
         inviteCode: user?.inviteCode ?? null,
         inviteCount: user?.inviteCount ?? 0,
         inviteVipCount: user?.inviteVipCount ?? 0,

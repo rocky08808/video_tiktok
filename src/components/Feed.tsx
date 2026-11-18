@@ -135,6 +135,7 @@ export function Feed() {
   const [user, setUser] = useState<{
     username: string
     vip: boolean
+    vipUntil?: string | null
     inviteCode?: string | null
     inviteCount?: number
     inviteVipCount?: number
@@ -335,6 +336,7 @@ export function Feed() {
         response.json() as Promise<{
           username?: string | null
           vip?: boolean
+          vipUntil?: string | null
           inviteCode?: string | null
           inviteCount?: number
           inviteVipCount?: number
@@ -365,6 +367,7 @@ export function Feed() {
         setUser({
           username: data.username,
           vip: data.vip === true,
+          vipUntil: data.vipUntil ?? null,
           inviteCode: data.inviteCode ?? null,
           inviteCount: data.inviteCount ?? 0,
           inviteVipCount: data.inviteVipCount ?? 0,
@@ -713,6 +716,7 @@ function activeVideo() {
     next: {
       username: string
       vip: boolean
+      vipUntil?: string | null
       inviteCode?: string | null
       inviteCount?: number
       inviteVipCount?: number
@@ -725,6 +729,7 @@ function activeVideo() {
       .then((response) =>
         response.json() as Promise<{
           vip?: boolean
+          vipUntil?: string | null
           inviteCode?: string | null
           inviteCount?: number
           inviteVipCount?: number
@@ -742,6 +747,7 @@ function activeVideo() {
             ? {
                 ...current,
                 vip,
+                vipUntil: data.vipUntil ?? current.vipUntil ?? null,
                 inviteCode: data.inviteCode ?? current.inviteCode ?? null,
                 inviteCount: data.inviteCount ?? current.inviteCount ?? 0,
                 inviteVipCount: data.inviteVipCount ?? current.inviteVipCount ?? 0,

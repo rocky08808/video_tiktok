@@ -8,6 +8,7 @@ type UserRow = {
   username: string
   vip: boolean
   vipAt: string | null
+  vipUntil: string | null
   vipSource: string | null
   inviteCode: string | null
   invitedBy: string | null
@@ -279,7 +280,11 @@ export default function AdminUsersPage() {
                     ) : (
                       <span className="text-white/35">普通</span>
                     )}
-                    {user.vipAt && <p className="mt-1 text-[11px] text-white/30">{formatTime(user.vipAt)}</p>}
+                    {user.vipUntil ? (
+                      <p className="mt-1 text-[11px] text-white/30">至 {formatTime(user.vipUntil)}</p>
+                    ) : user.vipAt ? (
+                      <p className="mt-1 text-[11px] text-white/30">{formatTime(user.vipAt)}</p>
+                    ) : null}
                   </td>
                   <td className="text-white/55">{user.vipSource || "—"}</td>
                   <td className="tabular-nums text-white/70">

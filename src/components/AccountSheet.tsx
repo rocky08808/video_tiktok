@@ -2,11 +2,12 @@
 
 import { useEffect, useState, type FormEvent } from "react"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
-import { VIP_INVITE_NEED } from "@/lib/vip"
+import { formatVipUntilLabel, VIP_DURATION_DAYS, VIP_INVITE_NEED } from "@/lib/vip"
 
 type User = {
   username: string
   vip: boolean
+  vipUntil?: string | null
   inviteCode?: string | null
   inviteCount?: number
   inviteVipCount?: number
@@ -77,7 +78,11 @@ export function AccountSheet({
       const data = (await response.json()) as {
         username?: string
         vip?: boolean
+        vipUntil?: string | null
         inviteCode?: string
+        inviteCount?: number
+        inviteVipCount?: number
+        inviteNeed?: number
         error?: string
       }
       if (!response.ok || !data.username) {
@@ -88,10 +93,11 @@ export function AccountSheet({
       onUser({
         username: data.username,
         vip: data.vip === true,
+        vipUntil: data.vipUntil ?? null,
         inviteCode: data.inviteCode ?? null,
-        inviteCount: 0,
-        inviteVipCount: 0,
-        inviteNeed: VIP_INVITE_NEED,
+        inviteCount: data.inviteCount ?? 0,
+        inviteVipCount: data.inviteVipCount ?? 0,
+        inviteNeed: data.inviteNeed ?? VIP_INVITE_NEED,
       })
     } catch {
       setError("网络不好，稍后再试")
@@ -137,10 +143,17 @@ export function AccountSheet({
   const inviteNeed = user?.inviteNeed ?? settings.inviteNeed ?? VIP_INVITE_NEED
   const inviteCount = user?.inviteCount ?? 0
   const inviteVipCount = user?.inviteVipCount ?? 0
-  const inviteProgress = Math.min(1, inviteNeed > 0 ? inviteVipCount / inviteNeed : 0)
+  const batchProgress = inviteNeed > 0 ? inviteVipCount % inviteNeed : 0
+  const inviteProgress = Math.min(
+    1,
+    inviteNeed > 0 ? (user?.vip ? batchProgress / inviteNeed : inviteVipCount / inviteNeed) : 0,
+  )
+  const vipUntilLabel = formatVipUntilLabel(user?.vipUntil)
+  const remainForBatch =
+    inviteNeed > 0 ? (batchProgress === 0 && inviteVipCount > 0 && user?.vip ? inviteNeed : inviteNeed - batchProgress) : 0
 
   return (
-    <div inert={!open} className={`absolute inset-0 z-40 ${open ? "" : "pointer-events-none"}`}>
+    <div inert={!open} className={`absolute inset-0 z-[60] ${open ? "" : "pointer-events-none"}`}>
       <button
         type="button"
         aria-label="关闭个人中心"
@@ -155,7 +168,9 @@ export function AccountSheet({
       >
         <header className="relative grid place-items-center pb-5 pt-1">
           <span className="absolute top-0 h-1 w-10 rounded-full bg-white/20" />
-          <h2 className="pt-3 text-sm font-medium tracking-wide text-white/90">个人中心</h2>
+          <h2 className="pt-3 text-sm font-medium tracking-wide text-white/90">
+            {user ? "个人中心" : mode === "login" ? "登录" : "注册"}
+          </h2>
           <button
             type="button"
             className="absolute right-0 top-2 grid h-8 w-8 place-items-center text-xl leading-none text-white/55"
@@ -183,7 +198,9 @@ export function AccountSheet({
                 </p>
                 <p className="mt-1 text-[13px] leading-snug text-white/45">
                   {user.vip
-                    ? `已收藏 ${savedCount} 条视频`
+                    ? vipUntilLabel
+                      ? `VIP 至 ${vipUntilLabel} · 已收藏 ${savedCount} 条`
+                      : `已收藏 ${savedCount} 条视频`
                     : `每天 ${settings.freeDailyVideos} 条视频 · ${settings.freeDailyPics} 张美图 · VIP 全开放`}
                 </p>
               </div>
@@ -199,20 +216,19 @@ export function AccountSheet({
                   <p className="text-[15px] font-semibold text-white">邀请好友</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-white/45">
                     {user.vip
-                      ? "分享邀请码，让好友也来看精彩内容"
+                      ? `每满 ${inviteNeed} 位好友开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
                       : `满 ${inviteNeed} 位好友开通 VIP，你免费升级`}
                   </p>
                 </div>
-                {!user.vip && inviteVipCount >= inviteNeed && (
+                {user.vip ? (
+                  <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
+                    可叠加
+                  </span>
+                ) : inviteVipCount >= inviteNeed ? (
                   <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
                     已达成
                   </span>
-                )}
-                {user.vip && (
-                  <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
-                    已是 VIP
-                  </span>
-                )}
+                ) : null}
               </div>
 
               <div className="relative mt-4 grid grid-cols-2 gap-2">
@@ -224,32 +240,33 @@ export function AccountSheet({
                   </p>
                 </div>
                 <div className="rounded-xl bg-black/25 px-3 py-3">
-                  <p className="text-[11px] text-white/40">{user.vip ? "好友 VIP" : "已成 VIP"}</p>
+                  <p className="text-[11px] text-white/40">好友 VIP</p>
                   <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
                     {inviteVipCount}
-                    {!user.vip && (
-                      <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
-                    )}
-                    {user.vip && <span className="ml-1 text-[12px] font-medium text-white/35">人</span>}
+                    <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
                   </p>
                 </div>
               </div>
 
-              {!user.vip && (
-                <div className="relative mt-3.5">
-                  <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
-                      style={{ width: `${inviteProgress * 100}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-[11px] text-white/35">
-                    {inviteVipCount >= inviteNeed
+              <div className="relative mt-3.5">
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] transition-[width] duration-500 ease-out"
+                    style={{
+                      width: `${(user.vip && batchProgress === 0 && inviteVipCount > 0 ? 1 : inviteProgress) * 100}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-[11px] text-white/35">
+                  {user.vip
+                    ? batchProgress === 0 && inviteVipCount > 0
+                      ? `本轮已满，已叠加 ${VIP_DURATION_DAYS} 天，继续邀请可再叠`
+                      : `再邀 ${remainForBatch} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
+                    : inviteVipCount >= inviteNeed
                       ? "邀请奖励已解锁"
                       : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`}
-                  </p>
-                </div>
-              )}
+                </p>
+              </div>
 
               {user.inviteCode && (
                 <div className="relative mt-4 flex items-center gap-2 rounded-xl bg-black/30 p-1.5 pl-3">
@@ -274,15 +291,13 @@ export function AccountSheet({
               )}
             </div>
 
-            {!user.vip && (
-              <button
-                type="button"
-                className="mt-4 h-12 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
-                onClick={onOpenVip}
-              >
-                开通 VIP
-              </button>
-            )}
+            <button
+              type="button"
+              className="mt-4 h-12 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
+              onClick={onOpenVip}
+            >
+              {user.vip ? `续费 VIP（+${VIP_DURATION_DAYS} 天）` : "开通 VIP"}
+            </button>
             {error && <p className="mt-3 text-center text-sm text-[var(--dy)]">{error}</p>}
             <button
               type="button"

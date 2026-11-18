@@ -12,8 +12,11 @@ import {
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
 import { getAppSettings } from "@/lib/app-settings"
 import {
+  isVipUntilActive,
+  readVipUntil,
   VIP_AMOUNT_SLOTS,
   VIP_AMOUNT_STEP,
+  VIP_DURATION_MS,
   VIP_NETWORK,
   VIP_ORDER_TTL_MS,
   vipUsdtAddress,
@@ -105,14 +108,30 @@ export async function ensureInviteCode(username: string) {
   throw new Error("邀请码生成失败")
 }
 
+async function countInviteVip(username: string) {
+  const users = await getUsersCollection()
+  // 统计曾开通过 VIP 的好友，过期后仍计入邀请达标
+  return users.countDocuments({
+    invitedBy: username,
+    vipAt: { $exists: true, $ne: null },
+  })
+}
+
 export async function inviteStats(username: string) {
   await ensureAuthCollections()
   const users = await getUsersCollection()
   const inviteCode = await ensureInviteCode(username)
-  const inviteVipCount = await users.countDocuments({ invitedBy: username, vip: true })
+  const inviteVipCount = await countInviteVip(username)
   const inviteCount = await users.countDocuments({ invitedBy: username })
   const settings = await getAppSettings()
   return { inviteCode, inviteCount, inviteVipCount, inviteNeed: settings.inviteNeed }
+}
+
+function vipActiveFromDoc(doc: { vip?: unknown; vipUntil?: unknown } | null | undefined) {
+  const until = readVipUntil(doc?.vipUntil)
+  if (until) return isVipUntilActive(until)
+  // 兼容旧数据：仅有 vip=true、尚未写入到期时间
+  return doc?.vip === true
 }
 
 export async function resolveInviter(inviteCode: unknown) {
@@ -167,14 +186,29 @@ export async function currentUser() {
   })
   if (typeof session?.username !== "string") return null
   const users = await getUsersCollection()
-  const doc = await users.findOne({ usernameKey: session.username.toLocaleLowerCase() })
+  const key = session.username.toLocaleLowerCase()
+  const doc = await users.findOne({ usernameKey: key })
+  let vipUntil = readVipUntil(doc?.vipUntil)
+  let vip = vipActiveFromDoc(
+    doc ? { vip: doc.vip, vipUntil: doc.vipUntil } : null,
+  )
+  if (doc?.vip === true && !vipUntil) {
+    // 旧永久 VIP → 首次读取时落成 100 天
+    vipUntil = new Date(Date.now() + VIP_DURATION_MS)
+    await users.updateOne({ usernameKey: key }, { $set: { vipUntil, vip: true } })
+    vip = true
+  } else if (doc?.vip === true && vipUntil && !isVipUntilActive(vipUntil)) {
+    await users.updateOne({ usernameKey: key }, { $set: { vip: false } })
+    vip = false
+  }
   const inviteCode = await ensureInviteCode(session.username)
-  const inviteVipCount = await users.countDocuments({ invitedBy: session.username, vip: true })
+  const inviteVipCount = await countInviteVip(session.username)
   const inviteCount = await users.countDocuments({ invitedBy: session.username })
   const settings = await getAppSettings()
   return {
     username: session.username,
-    vip: doc?.vip === true,
+    vip,
+    vipUntil: vip && vipUntil ? vipUntil.toISOString() : null,
     inviteCode,
     inviteCount,
     inviteVipCount,
@@ -188,6 +222,49 @@ export async function currentUser() {
   }
 }
 
+async function extendVip(
+  username: string,
+  periods: number,
+  source: "pay" | "invite" | "admin",
+) {
+  await ensureAuthCollections()
+  const users = await getUsersCollection()
+  const key = username.toLocaleLowerCase()
+  const units = Math.max(1, Math.floor(periods))
+  const existing = await users.findOne(
+    { usernameKey: key },
+    { projection: { vip: 1, vipUntil: 1, vipAt: 1 } },
+  )
+  const now = Date.now()
+  const currentUntil = readVipUntil(existing?.vipUntil)
+  let start = now
+  if (currentUntil && currentUntil.getTime() > now) {
+    start = currentUntil.getTime()
+  } else if (existing?.vip === true && !currentUntil) {
+    // 旧永久 VIP 先保留 100 天，再叠加本次
+    start = now + VIP_DURATION_MS
+  }
+  const vipUntil = new Date(start + VIP_DURATION_MS * units)
+  const vipAt =
+    existing?.vipAt instanceof Date
+      ? existing.vipAt
+      : typeof existing?.vipAt === "string" || typeof existing?.vipAt === "number"
+        ? new Date(existing.vipAt)
+        : new Date(now)
+  await users.updateOne(
+    { usernameKey: key },
+    {
+      $set: {
+        vip: true,
+        vipUntil,
+        vipAt: Number.isNaN(vipAt.getTime()) ? new Date(now) : vipAt,
+        vipSource: source,
+      },
+    },
+  )
+  return vipUntil
+}
+
 async function maybeRewardInviter(username: string) {
   const users = await getUsersCollection()
   const user = await users.findOne(
@@ -196,21 +273,31 @@ async function maybeRewardInviter(username: string) {
   )
   if (typeof user?.invitedBy !== "string" || !user.invitedBy) return
   const settings = await getAppSettings()
-  const inviteVipCount = await users.countDocuments({ invitedBy: user.invitedBy, vip: true })
-  if (inviteVipCount < settings.inviteNeed) return
-  await openVip(user.invitedBy, "invite")
+  const need = settings.inviteNeed
+  if (need <= 0) return
+  const inviteVipCount = await countInviteVip(user.invitedBy)
+  const batches = Math.floor(inviteVipCount / need)
+  if (batches <= 0) return
+  const inviterKey = user.invitedBy.toLocaleLowerCase()
+  const inviter = await users.findOne(
+    { usernameKey: inviterKey },
+    { projection: { username: 1, inviteVipGranted: 1 } },
+  )
+  if (!inviter || typeof inviter.username !== "string") return
+  const granted = Math.max(0, Math.floor(Number(inviter.inviteVipGranted) || 0))
+  const pending = batches - granted
+  if (pending <= 0) return
+  await extendVip(inviter.username, pending, "invite")
+  await users.updateOne({ usernameKey: inviterKey }, { $max: { inviteVipGranted: batches } })
+  await maybeRewardInviter(inviter.username)
 }
 
-export async function openVip(username: string, source: "pay" | "invite" | "admin" = "pay") {
-  await ensureAuthCollections()
-  const users = await getUsersCollection()
-  const key = username.toLocaleLowerCase()
-  const existing = await users.findOne({ usernameKey: key }, { projection: { vip: 1 } })
-  if (existing?.vip === true) return true
-  await users.updateOne(
-    { usernameKey: key },
-    { $set: { vip: true, vipAt: new Date(), vipSource: source } },
-  )
+export async function openVip(
+  username: string,
+  source: "pay" | "invite" | "admin" = "pay",
+  periods = 1,
+) {
+  await extendVip(username, periods, source)
   await maybeRewardInviter(username)
   return true
 }

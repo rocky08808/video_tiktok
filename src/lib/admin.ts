@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import { ObjectId } from "mongodb"
 import { cookies } from "next/headers"
 import { hashPassword, hashToken, openVip } from "@/lib/auth"
+import { isVipUntilActive, readVipUntil } from "@/lib/vip"
 import { getSessionsCollection, getUsersCollection, getVipOrdersCollection } from "@/lib/mongo"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
 import { formatVipAmount, VIP_ORDER_TTL_MS, vipUsdtAddress } from "@/lib/vip"
@@ -94,6 +95,7 @@ export type AdminUserRow = {
   username: string
   vip: boolean
   vipAt: string | null
+  vipUntil: string | null
   vipSource: string | null
   inviteCode: string | null
   invitedBy: string | null
@@ -122,16 +124,29 @@ export async function listUsers(input: {
   const users = await getUsersCollection()
   const page = Math.max(1, input.page || 1)
   const pageSize = Math.min(100, Math.max(10, input.pageSize || 20))
-  const filter: Record<string, unknown> = {}
+  const now = new Date()
+  const clauses: Record<string, unknown>[] = []
   const q = input.q?.trim()
   if (q) {
-    filter.$or = [
-      { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
-      { inviteCode: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } },
-    ]
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    clauses.push({
+      $or: [
+        { username: { $regex: safe, $options: "i" } },
+        { inviteCode: { $regex: safe, $options: "i" } },
+      ],
+    })
   }
-  if (input.vip === "yes") filter.vip = true
-  if (input.vip === "no") filter.vip = { $ne: true }
+  const activeVip = {
+    $or: [
+      { vipUntil: { $gt: now } },
+      { vip: true, vipUntil: { $exists: false } },
+      { vip: true, vipUntil: null },
+    ],
+  }
+  if (input.vip === "yes") clauses.push(activeVip)
+  if (input.vip === "no") clauses.push({ $nor: activeVip.$or })
+  const filter: Record<string, unknown> =
+    clauses.length === 0 ? {} : clauses.length === 1 ? clauses[0]! : { $and: clauses }
 
   const total = await users.countDocuments(filter)
   const docs = await users
@@ -140,6 +155,7 @@ export async function listUsers(input: {
         username: 1,
         vip: 1,
         vipAt: 1,
+        vipUntil: 1,
         vipSource: 1,
         inviteCode: 1,
         invitedBy: 1,
@@ -164,7 +180,11 @@ export async function listUsers(input: {
               $group: {
                 _id: "$invitedBy",
                 inviteCount: { $sum: 1 },
-                inviteVipCount: { $sum: { $cond: [{ $eq: ["$vip", true] }, 1, 0] } },
+                inviteVipCount: {
+                  $sum: {
+                    $cond: [{ $and: [{ $ne: ["$vipAt", null] }, { $ifNull: ["$vipAt", false] }] }, 1, 0],
+                  },
+                },
               },
             },
           ])
@@ -176,11 +196,14 @@ export async function listUsers(input: {
   const items: AdminUserRow[] = docs.flatMap((doc) => {
     if (typeof doc.username !== "string") return []
     const invite = inviteMap.get(doc.username) || { inviteCount: 0, inviteVipCount: 0 }
+    const until = readVipUntil(doc.vipUntil)
+    const vip = until ? isVipUntilActive(until) : doc.vip === true
     return [
       {
         username: doc.username,
-        vip: doc.vip === true,
+        vip,
         vipAt: asDate(doc.vipAt),
+        vipUntil: asDate(doc.vipUntil),
         vipSource: typeof doc.vipSource === "string" ? doc.vipSource : null,
         inviteCode: typeof doc.inviteCode === "string" ? doc.inviteCode : null,
         invitedBy: typeof doc.invitedBy === "string" ? doc.invitedBy : null,
@@ -208,7 +231,7 @@ export async function setUserVip(username: string, vip: boolean) {
   }
   await users.updateOne(
     { usernameKey: key.toLocaleLowerCase() },
-    { $set: { vip: false, vipAt: null, vipSource: null } },
+    { $set: { vip: false, vipAt: null, vipUntil: null, vipSource: null } },
   )
   return { username: doc.username, vip: false }
 }

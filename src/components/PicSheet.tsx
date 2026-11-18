@@ -226,11 +226,42 @@ export function PicSheet({
   }
 
   function bumpCount(id: string, field: "likes" | "bookmarks", delta: number) {
-    setPics((currentList) =>
-      currentList.map((pic) =>
+    setPics((currentList) => {
+      const next = currentList.map((pic) =>
         pic.id === id ? { ...pic, [field]: Math.max(0, pic[field] + delta) } : pic,
-      ),
-    )
+      )
+      persist(next, indexRef.current)
+      return next
+    })
+  }
+
+  async function hydrateCounts(list: PicItem[]) {
+    if (list.length === 0) return
+    try {
+      const response = await fetch("/api/pics/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: list.map((pic) => pic.id) }),
+      })
+      const data = (await response.json()) as { pics?: PackedPic[] }
+      if (!response.ok || !Array.isArray(data.pics) || data.pics.length === 0) return
+      const map = new Map(data.pics.map((pic) => [pic.id, normalizePic(pic)]))
+      setPics((current) => {
+        let changed = false
+        const next = current.map((pic) => {
+          const hit = map.get(pic.id)
+          if (!hit) return pic
+          if (hit.likes === pic.likes && hit.bookmarks === pic.bookmarks) return pic
+          changed = true
+          return { ...pic, likes: hit.likes, bookmarks: hit.bookmarks }
+        })
+        if (!changed) return current
+        persist(next, indexRef.current)
+        return next
+      })
+    } catch {
+      // ignore
+    }
   }
 
   async function loadPics(force: boolean) {
@@ -241,6 +272,7 @@ export function PicSheet({
           setError(null)
           applyPics(cached.pics, cached.index, false)
           setLoading(false)
+          void hydrateCounts(cached.pics)
           return
         }
       } else {
@@ -249,6 +281,7 @@ export function PicSheet({
           setError(null)
           applyPics(cached.pics, cached.index, true)
           setLoading(false)
+          void hydrateCounts(cached.pics)
           return
         }
       }
@@ -369,14 +402,16 @@ export function PicSheet({
         }
         const count = data.counts?.[current.id]
         if (typeof count !== "number") return
-        setPics((list) =>
-          list.map((pic) => {
+        setPics((list) => {
+          const next = list.map((pic) => {
             if (pic.id !== current.id) return pic
             // 避免服务端偶发 0 把乐观更新盖掉
             if (adding && count < pic.likes) return pic
             return { ...pic, likes: count }
-          }),
-        )
+          })
+          persist(next, indexRef.current)
+          return next
+        })
       })
       .catch(() => {})
   }
@@ -424,13 +459,15 @@ export function PicSheet({
         }
         const count = data.counts?.[targetId]
         if (typeof count !== "number") return
-        setPics((list) =>
-          list.map((pic) => {
+        setPics((list) => {
+          const next = list.map((pic) => {
             if (pic.id !== targetId) return pic
             if (adding && count < pic.bookmarks) return pic
             return { ...pic, bookmarks: count }
-          }),
-        )
+          })
+          persist(next, indexRef.current)
+          return next
+        })
         setSavedList((list) =>
           list.map((pic) => {
             if (pic.id !== targetId) return pic

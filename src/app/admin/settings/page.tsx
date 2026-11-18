@@ -186,7 +186,9 @@ export default function AdminSettingsPage() {
 
           <section className="admin-card">
             <p className="text-[15px] font-semibold text-white">邀请升级</p>
-            <p className="mt-1 text-[12px] text-white/40">邀请好友开通 VIP 达到人数后，邀请人免费成为 VIP</p>
+            <p className="mt-1 text-[12px] text-white/40">
+              邀请好友开通 VIP 达到人数后，邀请人获得 100 天；已是 VIP 可按同样人数继续叠加
+            </p>
             <label className="mt-4 block text-sm">
               <span className="text-white/50">需要邀请开通 VIP 的人数</span>
               <input
