@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { AccountSheet, storeInviteCode } from "@/components/AccountSheet"
-import { IconFullscreen, IconVolume } from "@/components/icons"
+import { IconFullscreen, IconUser, IconVolume } from "@/components/icons"
 import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
@@ -152,7 +152,8 @@ export function Feed() {
   const vipUserRef = useRef(false)
   const listRef = useRef<VideoItem[]>([])
   const tabRef = useRef<Tab>(tab)
-  const lastScrollTop = useRef(0)
+  const headerHiddenRef = useRef(false)
+  const touchStartY = useRef<number | null>(null)
   const countFixes = useRef<{ likes: Record<string, number>; bookmarks: Record<string, number> }>({
     likes: {},
     bookmarks: {},
@@ -421,7 +422,7 @@ export function Feed() {
         return
       }
       if (index === activeRef.current) return
-      setHeaderHidden(index > activeRef.current)
+      applyHeaderHidden(index > activeRef.current)
       activeRef.current = index
       pauseOtherVideos(root, index)
       setActive(index)
@@ -457,20 +458,28 @@ export function Feed() {
         if (!profileRef.current) setVipOpen(true)
         return
       }
-      setHeaderHidden(event.deltaY > 0)
+      applyHeaderHidden(event.deltaY > 0)
       root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       window.setTimeout(() => {
         locked = false
       }, 520)
     }
+    const onTouchStart = (event: TouchEvent) => {
+      touchStartY.current = event.touches[0]?.clientY ?? null
+    }
+    const onTouchEnd = (event: TouchEvent) => {
+      const start = touchStartY.current
+      touchStartY.current = null
+      if (start == null || profileRef.current) return
+      const end = event.changedTouches[0]?.clientY
+      if (end == null) return
+      const dy = start - end
+      if (Math.abs(dy) < 24) return
+      applyHeaderHidden(dy > 0)
+    }
     const onScroll = () => {
       if (root.clientHeight === 0 || list.length === 0) return
       const top = root.scrollTop
-      const delta = top - lastScrollTop.current
-      if (Math.abs(delta) > 12) {
-        setHeaderHidden(delta > 0)
-        lastScrollTop.current = top
-      }
       const index = Math.min(list.length - 1, Math.max(0, Math.round(top / root.clientHeight)))
       if (!allowIndex(index)) {
         const fallback = Math.max(0, activeRef.current)
@@ -480,15 +489,19 @@ export function Feed() {
       }
       pauseOtherVideos(root, index)
       if (index === activeRef.current) return
-      setHeaderHidden(index > activeRef.current)
+      applyHeaderHidden(index > activeRef.current)
       activeRef.current = index
       setActive(index)
       setPaused(false)
     }
     root.addEventListener("wheel", onWheel, { passive: false })
+    root.addEventListener("touchstart", onTouchStart, { passive: true })
+    root.addEventListener("touchend", onTouchEnd, { passive: true })
     root.addEventListener("scroll", onScroll, { passive: true })
     return () => {
       root.removeEventListener("wheel", onWheel)
+      root.removeEventListener("touchstart", onTouchStart)
+      root.removeEventListener("touchend", onTouchEnd)
       root.removeEventListener("scroll", onScroll)
     }
   }, [list.length])
@@ -543,7 +556,7 @@ export function Feed() {
           if (!profileRef.current) setVipOpen(true)
           return
         }
-        setHeaderHidden(event.key === "ArrowDown")
+        applyHeaderHidden(event.key === "ArrowDown")
         root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault()
@@ -612,12 +625,18 @@ export function Feed() {
     setToast({ text, id: Date.now() })
   }
 
+  function applyHeaderHidden(hidden: boolean) {
+    if (headerHiddenRef.current === hidden) return
+    headerHiddenRef.current = hidden
+    setHeaderHidden(hidden)
+  }
+
   function pauseOtherVideos(root: HTMLElement, keep: number) {
-  root.querySelectorAll<HTMLElement>("[data-index]").forEach((slide) => {
-    if (Number(slide.dataset.index) === keep) return
-    slide.querySelector("video")?.pause()
-  })
-}
+    root.querySelectorAll<HTMLElement>("[data-index]").forEach((slide) => {
+      if (Number(slide.dataset.index) === keep) return
+      slide.querySelector("video")?.pause()
+    })
+  }
 
 function activeVideo() {
     return scrollerRef.current?.querySelector<HTMLVideoElement>("[data-active='true'] video") ?? null
@@ -763,7 +782,7 @@ function activeVideo() {
     if (tab === "forYou") forYouIndex.current = activeRef.current
     const index = next === "forYou" ? forYouIndex.current : 0
     activeRef.current = index
-    setHeaderHidden(false)
+    applyHeaderHidden(false)
     setTab(next)
     setActive(index)
     setPaused(false)
@@ -873,11 +892,9 @@ function activeVideo() {
                   paused={paused || watchBlocked || limitBlocked}
                   saved={savedIds.includes(video.id)}
                   liked={likedIds.includes(video.id)}
-                  profileName={user?.username ?? null}
                   onPausedChange={setPlayback}
                   onToggleSaved={() => toggleSaved(video.id)}
                   onToggleLike={() => toggleLike(video.id)}
-                  onOpenProfile={() => setProfileOpen(true)}
                 />
               ),
             )
@@ -885,9 +902,12 @@ function activeVideo() {
         </div>
 
         <header
-          className={`pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))] transition-[transform,opacity] duration-300 ease-out ${
-            headerHidden ? "-translate-y-[120%] opacity-0" : "translate-y-0 opacity-100"
-          }`}
+          className="feed-header pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]"
+          data-hidden={headerHidden ? "true" : "false"}
+          style={{
+            opacity: headerHidden ? 0 : 1,
+            transform: headerHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
+          }}
         >
           <button
             type="button"
@@ -935,6 +955,24 @@ function activeVideo() {
             </button>
           </div>
         </header>
+
+        {!loading && (
+          <button
+            type="button"
+            aria-label="个人中心"
+            className="feed-profile absolute right-4 bottom-[max(18px,env(safe-area-inset-bottom))] z-30 grid place-items-center pb-1"
+            data-hidden={headerHidden ? "true" : "false"}
+            style={{
+              opacity: headerHidden ? 0 : 1,
+              transform: headerHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+            onClick={() => setProfileOpen(true)}
+          >
+            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border-2 border-white/80 bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-base font-semibold text-white">
+              {user?.username ? Array.from(user.username)[0] : <IconUser />}
+            </span>
+          </button>
+        )}
 
         {showBanner && (
           <div className="absolute inset-x-3 top-14 z-30 flex items-start gap-3 rounded-2xl bg-black/60 px-3 py-2 text-[12px] leading-5 text-white/90 backdrop-blur-md">

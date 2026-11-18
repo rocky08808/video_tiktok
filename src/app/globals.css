@@ -96,6 +96,36 @@ input {
   overflow: hidden;
 }
 
+.feed-header {
+  transition:
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+.feed-header[data-hidden="true"] {
+  transition-duration: 260ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.feed-header[data-hidden="true"] button,
+.feed-header[data-hidden="true"] nav {
+  pointer-events: none !important;
+}
+
+.feed-profile {
+  transition:
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+.feed-profile[data-hidden="true"] {
+  transition-duration: 260ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  pointer-events: none;
+}
+
 @keyframes float-heart {
   0% {
     opacity: 0;

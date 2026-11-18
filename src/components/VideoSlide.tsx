@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react"
 import { HlsVideo } from "@/components/HlsVideo"
-import { IconBookmark, IconHeart, IconPlay, IconUser } from "@/components/icons"
+import { IconBookmark, IconHeart, IconPlay } from "@/components/icons"
 import { formatCount } from "@/lib/format"
 import type { VideoItem } from "@/lib/types"
 
@@ -15,11 +15,9 @@ type Props = {
   paused: boolean
   saved: boolean
   liked: boolean
-  profileName: string | null
   onPausedChange: (paused: boolean) => void
   onToggleSaved: () => void
   onToggleLike: () => void
-  onOpenProfile: () => void
 }
 
 export function VideoSlide({
@@ -31,11 +29,9 @@ export function VideoSlide({
   paused,
   saved,
   liked,
-  profileName,
   onPausedChange,
   onToggleSaved,
   onToggleLike,
-  onOpenProfile,
 }: Props) {
   const rootRef = useRef<HTMLElement>(null)
   const startRef = useRef<{ x: number; y: number } | null>(null)
@@ -248,16 +244,7 @@ export function VideoSlide({
           >
             <IconBookmark filled={saved} />
           </RailButton>
-          <button
-            type="button"
-            aria-label="个人中心"
-            className="mt-1 grid place-items-center"
-            onClick={onOpenProfile}
-          >
-            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border-2 border-white/80 bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-base font-semibold text-white">
-              {profileName ? Array.from(profileName)[0] : <IconUser />}
-            </span>
-          </button>
+          <div className="mt-1 h-11 w-11" aria-hidden />
         </div>
       </div>
 
