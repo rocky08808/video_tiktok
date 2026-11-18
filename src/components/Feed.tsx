@@ -144,6 +144,7 @@ export function Feed() {
   const [picThumb, setPicThumb] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [watchBlocked, setWatchBlocked] = useState(false)
+  const [headerHidden, setHeaderHidden] = useState(false)
   const [limits, setLimits] = useState(DEFAULT_APP_SETTINGS)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
@@ -151,6 +152,7 @@ export function Feed() {
   const vipUserRef = useRef(false)
   const listRef = useRef<VideoItem[]>([])
   const tabRef = useRef<Tab>(tab)
+  const lastScrollTop = useRef(0)
   const countFixes = useRef<{ likes: Record<string, number>; bookmarks: Record<string, number> }>({
     likes: {},
     bookmarks: {},
@@ -419,6 +421,7 @@ export function Feed() {
         return
       }
       if (index === activeRef.current) return
+      setHeaderHidden(index > activeRef.current)
       activeRef.current = index
       pauseOtherVideos(root, index)
       setActive(index)
@@ -454,6 +457,7 @@ export function Feed() {
         if (!profileRef.current) setVipOpen(true)
         return
       }
+      setHeaderHidden(event.deltaY > 0)
       root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       window.setTimeout(() => {
         locked = false
@@ -461,7 +465,13 @@ export function Feed() {
     }
     const onScroll = () => {
       if (root.clientHeight === 0 || list.length === 0) return
-      const index = Math.min(list.length - 1, Math.max(0, Math.round(root.scrollTop / root.clientHeight)))
+      const top = root.scrollTop
+      const delta = top - lastScrollTop.current
+      if (Math.abs(delta) > 12) {
+        setHeaderHidden(delta > 0)
+        lastScrollTop.current = top
+      }
+      const index = Math.min(list.length - 1, Math.max(0, Math.round(top / root.clientHeight)))
       if (!allowIndex(index)) {
         const fallback = Math.max(0, activeRef.current)
         if (root.clientHeight > 0) root.scrollTop = fallback * root.clientHeight
@@ -470,6 +480,7 @@ export function Feed() {
       }
       pauseOtherVideos(root, index)
       if (index === activeRef.current) return
+      setHeaderHidden(index > activeRef.current)
       activeRef.current = index
       setActive(index)
       setPaused(false)
@@ -532,6 +543,7 @@ export function Feed() {
           if (!profileRef.current) setVipOpen(true)
           return
         }
+        setHeaderHidden(event.key === "ArrowDown")
         root.scrollTo({ top: next * root.clientHeight, behavior: "smooth" })
       } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         event.preventDefault()
@@ -751,6 +763,7 @@ function activeVideo() {
     if (tab === "forYou") forYouIndex.current = activeRef.current
     const index = next === "forYou" ? forYouIndex.current : 0
     activeRef.current = index
+    setHeaderHidden(false)
     setTab(next)
     setActive(index)
     setPaused(false)
@@ -871,7 +884,11 @@ function activeVideo() {
           )}
         </div>
 
-        <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]">
+        <header
+          className={`pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))] transition-[transform,opacity] duration-300 ease-out ${
+            headerHidden ? "-translate-y-[120%] opacity-0" : "translate-y-0 opacity-100"
+          }`}
+        >
           <button
             type="button"
             className="pointer-events-auto relative mt-0.5 flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ring-1 ring-white/25"
