@@ -115,6 +115,11 @@ export function PicSheet({
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [headerHidden, setHeaderHidden] = useState(false)
   const [touchY, setTouchY] = useState<number | null>(null)
+  const [savedListOpen, setSavedListOpen] = useState(false)
+  const [savedList, setSavedList] = useState<PicItem[]>([])
+  const [savedListLoading, setSavedListLoading] = useState(false)
+  const [savedListError, setSavedListError] = useState<string | null>(null)
+  const [browsingSaved, setBrowsingSaved] = useState(false)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const indexRef = useRef(0)
   const headerHiddenRef = useRef(false)
@@ -123,6 +128,7 @@ export function PicSheet({
   const likedSeq = useRef(0)
   const savedSeq = useRef(0)
   const suppressTap = useRef(false)
+  const feedBackup = useRef<{ pics: PicItem[]; index: number } | null>(null)
 
   indexRef.current = index
   const current = pics[index] ?? null
@@ -136,6 +142,7 @@ export function PicSheet({
   }
 
   function persist(next: PicItem[], nextIndex: number) {
+    if (browsingSaved) return
     if (vip) writeVipSession(next, nextIndex)
     else writeFreePicPack(next, nextIndex)
   }
@@ -149,6 +156,73 @@ export function PicSheet({
     indexRef.current = safeIndex
     persist(normalized, safeIndex)
     restorePending.current = true
+  }
+
+  function exitSavedBrowse() {
+    const backup = feedBackup.current
+    feedBackup.current = null
+    setBrowsingSaved(false)
+    applyHeaderHidden(false)
+    if (!backup) return
+    setPics(backup.pics)
+    setIndex(backup.index)
+    indexRef.current = backup.index
+    restorePending.current = true
+  }
+
+  async function loadSavedList() {
+    setSavedListLoading(true)
+    setSavedListError(null)
+    try {
+      const response = await fetch("/api/pics/saved")
+      const data = (await response.json()) as { pics?: PackedPic[]; error?: string }
+      if (!response.ok) {
+        setSavedList([])
+        setSavedListError(data.error || "加载失败")
+        return
+      }
+      const next = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
+      setSavedList(next)
+      if (data.error && next.length === 0) setSavedListError(data.error)
+    } catch {
+      setSavedList([])
+      setSavedListError("网络不好，稍后再试")
+    } finally {
+      setSavedListLoading(false)
+    }
+  }
+
+  function openSavedList() {
+    if (!loggedIn) {
+      onOpenLogin()
+      return
+    }
+    if (!vip) {
+      onOpenVip()
+      return
+    }
+    applyHeaderHidden(false)
+    setSavedListOpen(true)
+    void loadSavedList()
+  }
+
+  function openSavedPic(pic: PicItem) {
+    if (!browsingSaved) {
+      feedBackup.current = { pics, index: indexRef.current }
+      setBrowsingSaved(true)
+    }
+    const list = savedList.length > 0 ? savedList : [pic]
+    const nextIndex = Math.max(
+      0,
+      list.findIndex((item) => item.id === pic.id),
+    )
+    setSavedListOpen(false)
+    setLimited(false)
+    setPics(list)
+    setIndex(nextIndex)
+    indexRef.current = nextIndex
+    restorePending.current = true
+    applyHeaderHidden(false)
   }
 
   function bumpCount(id: string, field: "likes" | "bookmarks", delta: number) {
@@ -215,6 +289,11 @@ export function PicSheet({
   useEffect(() => {
     if (!open) {
       applyHeaderHidden(false)
+      setSavedListOpen(false)
+      if (browsingSaved) {
+        feedBackup.current = null
+        setBrowsingSaved(false)
+      }
       return
     }
     applyHeaderHidden(false)
@@ -312,14 +391,30 @@ export function PicSheet({
       onOpenVip()
       return
     }
-    const adding = !savedIds.includes(current.id)
+    const targetId = current.id
+    const adding = !savedIds.includes(targetId)
     const next = adding
-      ? [current.id, ...savedIds.filter((id) => id !== current.id)]
-      : savedIds.filter((id) => id !== current.id)
+      ? [targetId, ...savedIds.filter((id) => id !== targetId)]
+      : savedIds.filter((id) => id !== targetId)
     const seq = ++savedSeq.current
     setSavedIds(next)
     writeLocalIds(SAVED_PIC_KEY, next)
-    bumpCount(current.id, "bookmarks", adding ? 1 : -1)
+    bumpCount(targetId, "bookmarks", adding ? 1 : -1)
+    if (adding) {
+      setSavedList((list) => [current, ...list.filter((pic) => pic.id !== targetId)])
+    } else {
+      setSavedList((list) => list.filter((pic) => pic.id !== targetId))
+      if (browsingSaved) {
+        setPics((list) => {
+          const filtered = list.filter((pic) => pic.id !== targetId)
+          const safeIndex = Math.min(filtered.length - 1, Math.max(0, indexRef.current))
+          indexRef.current = filtered.length === 0 ? 0 : safeIndex
+          setIndex(indexRef.current)
+          restorePending.current = true
+          return filtered
+        })
+      }
+    }
     void pushPicIds("saved", next)
       .then((data) => {
         if (seq !== savedSeq.current) return
@@ -327,11 +422,18 @@ export function PicSheet({
           setSavedIds(data.savedPicIds)
           writeLocalIds(SAVED_PIC_KEY, data.savedPicIds)
         }
-        const count = data.counts?.[current.id]
+        const count = data.counts?.[targetId]
         if (typeof count !== "number") return
         setPics((list) =>
           list.map((pic) => {
-            if (pic.id !== current.id) return pic
+            if (pic.id !== targetId) return pic
+            if (adding && count < pic.bookmarks) return pic
+            return { ...pic, bookmarks: count }
+          }),
+        )
+        setSavedList((list) =>
+          list.map((pic) => {
+            if (pic.id !== targetId) return pic
             if (adding && count < pic.bookmarks) return pic
             return { ...pic, bookmarks: count }
           }),
@@ -367,22 +469,30 @@ export function PicSheet({
           <button
             type="button"
             className="grid h-10 w-10 place-items-center text-xl text-white/80"
-            onClick={onClose}
-            aria-label="关闭美图"
+            onClick={() => {
+              if (browsingSaved) {
+                exitSavedBrowse()
+                return
+              }
+              onClose()
+            }}
+            aria-label={browsingSaved ? "返回美图" : "关闭美图"}
           >
-            ×
+            {browsingSaved ? "‹" : "×"}
           </button>
           <div className="text-center">
-            <p className="text-sm font-semibold tracking-wide">美图</p>
+            <p className="text-sm font-semibold tracking-wide">{browsingSaved ? "收藏" : "美图"}</p>
             <p className="text-[11px] text-white/40">
               {pics.length > 0
                 ? `${index + 1} / ${pics.length}`
-                : limited
-                  ? `今日免费 ${freePicLimit()} 张`
-                  : "精选美图"}
+                : browsingSaved
+                  ? "还没有收藏"
+                  : limited
+                    ? `今日免费 ${freePicLimit()} 张`
+                    : "精选美图"}
             </p>
           </div>
-          {vip ? (
+          {vip && !browsingSaved ? (
             <button
               type="button"
               className="h-10 rounded-full px-2 text-[13px] text-white/70 disabled:opacity-40"
@@ -479,7 +589,31 @@ export function PicSheet({
           </div>
         )}
 
-        {limited && (
+        {loggedIn && (
+          <button
+            type="button"
+            aria-label={`美图收藏${savedIds.length > 0 ? ` ${savedIds.length} 张` : ""}`}
+            className="feed-profile absolute right-4 z-30 grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white ring-1 ring-white/20 backdrop-blur-sm"
+            data-hidden={headerHidden ? "true" : "false"}
+            style={{
+              bottom: limited
+                ? "max(96px, calc(env(safe-area-inset-bottom) + 84px))"
+                : "max(18px, env(safe-area-inset-bottom))",
+              opacity: headerHidden ? 0 : 1,
+              transform: headerHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+            onClick={openSavedList}
+          >
+            <IconBookmark filled className="h-5 w-5" />
+            {savedIds.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#fe2c55] px-1 text-[10px] font-semibold leading-none text-white">
+                {formatCount(savedIds.length)}
+              </span>
+            )}
+          </button>
+        )}
+
+        {limited && !browsingSaved && (
           <div className="relative z-10 shrink-0 border-t border-white/10 bg-[#141018]/95 px-5 pt-3 pb-[max(14px,env(safe-area-inset-bottom))] backdrop-blur">
             <p className="text-center text-[12px] text-white/45">
               普通用户今日 {readClientSettings().freeDailyPics} 张 · VIP 畅看全部美图
@@ -491,6 +625,83 @@ export function PicSheet({
             >
               开通 VIP 看更多
             </button>
+          </div>
+        )}
+
+        {savedListOpen && (
+          <div className="absolute inset-0 z-40 flex flex-col bg-[#0c0a10]">
+            <header className="flex shrink-0 items-center justify-between px-4 pt-[max(12px,env(safe-area-inset-top))] pb-3">
+              <button
+                type="button"
+                className="grid h-10 w-10 place-items-center text-xl text-white/80"
+                aria-label="关闭收藏列表"
+                onClick={() => setSavedListOpen(false)}
+              >
+                ×
+              </button>
+              <div className="text-center">
+                <p className="text-sm font-semibold tracking-wide">美图收藏</p>
+                <p className="text-[11px] text-white/40">
+                  {savedListLoading ? "加载中" : `${savedList.length} 张`}
+                </p>
+              </div>
+              <span className="w-10" />
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-[max(12px,env(safe-area-inset-bottom))]">
+              {savedListLoading ? (
+                <div className="grid h-full place-items-center">
+                  <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+                </div>
+              ) : savedListError && savedList.length === 0 ? (
+                <div className="grid h-full place-items-center px-8 text-center">
+                  <div>
+                    <p className="text-lg font-medium">加载失败</p>
+                    <p className="mt-2 text-sm leading-6 text-white/55">{savedListError}</p>
+                    <button
+                      type="button"
+                      className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
+                      onClick={() => void loadSavedList()}
+                    >
+                      重试
+                    </button>
+                  </div>
+                </div>
+              ) : savedList.length === 0 ? (
+                <div className="grid h-full place-items-center px-8 text-center">
+                  <div>
+                    <p className="text-lg font-medium">还没有收藏</p>
+                    <p className="mt-2 text-sm leading-6 text-white/55">在美图里点收藏，之后会出现在这里</p>
+                    <button
+                      type="button"
+                      className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
+                      onClick={() => setSavedListOpen(false)}
+                    >
+                      去看看
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-1">
+                  {savedList.map((pic) => (
+                    <button
+                      key={pic.id}
+                      type="button"
+                      className="relative aspect-[3/4] overflow-hidden bg-white/5"
+                      aria-label={`查看 ${pic.name}`}
+                      onClick={() => openSavedPic(pic)}
+                    >
+                      <img
+                        src={pic.src}
+                        alt={pic.name}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

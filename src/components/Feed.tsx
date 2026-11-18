@@ -8,6 +8,7 @@ import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { formatCount } from "@/lib/format"
 import { readFreePicPack, writeFreePicPack } from "@/lib/pic-pack"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import {
@@ -930,7 +931,11 @@ function activeVideo() {
             )}
           </button>
           <nav className="pointer-events-auto flex items-center gap-6 pt-1 text-[17px] font-semibold">
-            <TabButton active={tab === "saved"} onClick={() => selectTab("saved")}>
+            <TabButton
+              active={tab === "saved"}
+              badge={user && savedIds.length > 0 ? formatCount(savedIds.length) : undefined}
+              onClick={() => selectTab("saved")}
+            >
               收藏
             </TabButton>
             <TabButton active={tab === "forYou"} onClick={() => selectTab("forYou")}>
@@ -956,6 +961,22 @@ function activeVideo() {
             </button>
           </div>
         </header>
+
+        {!loading && tab === "saved" && list.length > 0 && (
+          <div
+            className="feed-profile pointer-events-none absolute left-4 bottom-[max(22px,env(safe-area-inset-bottom))] z-30 pb-1"
+            data-hidden={chromeHidden ? "true" : "false"}
+            style={{
+              opacity: chromeHidden ? 0 : 1,
+              transform: chromeHidden ? "translate3d(-120%, 0, 0)" : "translate3d(0, 0, 0)",
+            }}
+            aria-hidden={chromeHidden}
+          >
+            <p className="text-shadow text-[13px] font-semibold tracking-wide text-white/90">
+              {Math.min(list.length, Math.max(1, active + 1))} / {list.length}
+            </p>
+          </div>
+        )}
 
         {!loading && (
           <button
@@ -1095,16 +1116,23 @@ function formatClock(seconds: number) {
 
 function TabButton({
   active,
+  badge,
   onClick,
   children,
 }: {
   active: boolean
+  badge?: string
   onClick: () => void
   children: React.ReactNode
 }) {
   return (
     <button type="button" className={`relative ${active ? "text-white" : "text-white/50"}`} onClick={onClick}>
       {children}
+      {badge ? (
+        <span className="absolute -right-3.5 -top-1.5 flex h-[16px] min-w-[16px] items-center justify-center rounded-full bg-[#fe2c55] px-1 text-[10px] font-semibold leading-none text-white">
+          {badge}
+        </span>
+      ) : null}
       {active && <span className="absolute -bottom-1.5 left-1/2 h-0.5 w-5 -translate-x-1/2 rounded-full bg-white" />}
     </button>
   )
