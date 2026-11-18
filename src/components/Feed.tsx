@@ -805,7 +805,7 @@ function activeVideo() {
     <div className="flex h-dvh w-full items-center justify-center bg-[#1a1020] text-white">
       <div
         ref={stageRef}
-        className="stage relative h-dvh w-full overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:shadow-[0_24px_80px_rgba(0,0,0,.45)] sm:ring-1 sm:ring-white/10"
+        className="stage relative h-dvh w-full overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:ring-1 sm:ring-white/10"
       >
         <div ref={scrollerRef} className="feed-scroller">
           {loading ? (

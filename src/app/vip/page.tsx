@@ -186,7 +186,7 @@ export default function VipPage() {
 
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-[#120e16] text-white">
-      <div className="stage relative flex h-dvh w-full flex-col overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:shadow-[0_24px_80px_rgba(0,0,0,.45)] sm:ring-1 sm:ring-white/10">
+      <div className="stage relative flex h-dvh w-full flex-col overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:ring-1 sm:ring-white/10">
         <header className="relative z-10 flex shrink-0 items-center justify-between px-4 pt-[max(14px,env(safe-area-inset-top))]">
           <Link href="/" className="grid h-10 w-10 place-items-center text-white/70" aria-label="返回">
             ←
