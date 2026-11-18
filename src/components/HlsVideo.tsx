@@ -145,11 +145,13 @@ export function HlsVideo({
   return (
     <>
     <video
-      ref={videoRef}
+      ref={(node) => {
+        videoRef.current = node
+        if (node) node.setAttribute("referrerpolicy", "no-referrer")
+      }}
       className="media-fit absolute top-1/2 left-0 w-full -translate-y-1/2"
       playsInline
       loop
-      referrerPolicy="no-referrer"
       muted={muted}
       poster={poster}
       preload={preload ? "auto" : "none"}

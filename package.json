@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "gen": "npm i && npm run build && npm run start -p 3069",
+    "gen": "git pull && npm i && npm run build && npm run start -p 3069",
     "lint": "eslint",
     "db:seed": "node --env-file=.env.local scripts/seed-mongo.mjs",
     "db:import": "node --env-file=.env.local scripts/import-videos.mjs",

@@ -391,8 +391,14 @@ async function setUserFlag(username: string, field: IdField, id: string, on: boo
   const users = await getUsersCollection()
   const key = username.toLocaleLowerCase()
   const updated = on
-    ? await users.findOneAndUpdate({ usernameKey: key, [field]: { $ne: id } }, { $addToSet: { [field]: id } })
-    : await users.findOneAndUpdate({ usernameKey: key, [field]: id }, { $pull: { [field]: id } })
+    ? await users.findOneAndUpdate(
+        { usernameKey: key, [field]: { $ne: id } },
+        { $addToSet: { [field]: id } } as Record<string, unknown>,
+      )
+    : await users.findOneAndUpdate(
+        { usernameKey: key, [field]: id },
+        { $pull: { [field]: id } } as Record<string, unknown>,
+      )
   return Boolean(updated)
 }
 
