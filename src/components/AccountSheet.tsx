@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
+import { useT } from "@/components/LocaleProvider"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatVipUntilLabel, VIP_DURATION_DAYS, VIP_INVITE_NEED } from "@/lib/vip"
 
@@ -47,6 +48,7 @@ export function AccountSheet({
   onUser: (user: User | null) => void
   onOpenVip: () => void
 }) {
+  const t = useT()
   const [mode, setMode] = useState<"login" | "register">("login")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -86,7 +88,7 @@ export function AccountSheet({
         error?: string
       }
       if (!response.ok || !data.username) {
-        setError(data.error || "登录失败")
+        setError(data.error || t("account.loginFailed"))
         return
       }
       setPassword("")
@@ -100,7 +102,7 @@ export function AccountSheet({
         inviteNeed: data.inviteNeed ?? VIP_INVITE_NEED,
       })
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("account.network"))
     } finally {
       setPending(false)
     }
@@ -114,14 +116,14 @@ export function AccountSheet({
       const response = await fetch("/api/auth/logout", { method: "POST" })
       if (!response.ok) {
         const data = (await response.json()) as { error?: string }
-        setError(data.error || "退出失败")
+        setError(data.error || t("account.logoutFailed"))
         return
       }
       onUser(null)
       setMode("login")
       setPassword("")
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("account.network"))
     } finally {
       setPending(false)
     }
@@ -135,7 +137,7 @@ export function AccountSheet({
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1600)
     } catch {
-      setError("复制失败，请手动复制")
+      setError(t("account.copyFailed"))
     }
   }
 
@@ -156,7 +158,7 @@ export function AccountSheet({
     <div inert={!open} className={`absolute inset-0 z-[60] ${open ? "" : "pointer-events-none"}`}>
       <button
         type="button"
-        aria-label="关闭个人中心"
+        aria-label={t("account.close")}
         className={`absolute inset-0 bg-black/45 transition-opacity ${open ? "opacity-100" : "opacity-0"}`}
         onClick={onClose}
       />
@@ -169,13 +171,13 @@ export function AccountSheet({
         <header className="relative grid place-items-center pb-5 pt-1">
           <span className="absolute top-0 h-1 w-10 rounded-full bg-white/20" />
           <h2 className="pt-3 text-sm font-medium tracking-wide text-white/90">
-            {user ? "个人中心" : mode === "login" ? "登录" : "注册"}
+            {user ? t("account.title") : mode === "login" ? t("account.login") : t("account.register")}
           </h2>
           <button
             type="button"
             className="absolute right-0 top-2 grid h-8 w-8 place-items-center text-xl leading-none text-white/55"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("account.closeBtn")}
           >
             ×
           </button>
@@ -199,9 +201,13 @@ export function AccountSheet({
                 <p className="mt-1 text-[13px] leading-snug text-white/45">
                   {user.vip
                     ? vipUntilLabel
-                      ? `VIP 至 ${vipUntilLabel} · 已收藏 ${savedCount} 条`
-                      : `已收藏 ${savedCount} 条视频`
-                    : `每天 ${settings.freeDailyVideos} 条视频 · ${settings.freeDailyPics} 张美图 · VIP 全开放`}
+                      ? t("account.vipUntilSaved", { until: vipUntilLabel, n: savedCount })
+                      : t("account.savedCount", { n: savedCount })
+                    : t("account.freeQuota", {
+                        videos: settings.freeDailyVideos,
+                        movies: settings.freeDailyMovies,
+                        pics: settings.freeDailyPics,
+                      })}
                 </p>
               </div>
             </div>
@@ -213,34 +219,36 @@ export function AccountSheet({
               />
               <div className="relative flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-[15px] font-semibold text-white">邀请好友</p>
+                  <p className="text-[15px] font-semibold text-white">{t("account.inviteTitle")}</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-white/45">
                     {user.vip
-                      ? `每满 ${inviteNeed} 位好友开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
-                      : `满 ${inviteNeed} 位好友开通 VIP，你免费升级`}
+                      ? t("account.inviteVipStack", { need: inviteNeed, days: VIP_DURATION_DAYS })
+                      : t("account.inviteVipUnlock", { need: inviteNeed })}
                   </p>
                 </div>
                 {user.vip ? (
                   <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
-                    可叠加
+                    {t("account.stackable")}
                   </span>
                 ) : inviteVipCount >= inviteNeed ? (
                   <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
-                    已达成
+                    {t("account.achieved")}
                   </span>
                 ) : null}
               </div>
 
               <div className="relative mt-4 grid grid-cols-2 gap-2">
                 <div className="rounded-xl bg-black/25 px-3 py-3">
-                  <p className="text-[11px] text-white/40">已邀请</p>
+                  <p className="text-[11px] text-white/40">{t("account.invited")}</p>
                   <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
                     {inviteCount}
-                    <span className="ml-1 text-[12px] font-medium text-white/35">人</span>
+                    {t("account.people") ? (
+                      <span className="ml-1 text-[12px] font-medium text-white/35">{t("account.people")}</span>
+                    ) : null}
                   </p>
                 </div>
                 <div className="rounded-xl bg-black/25 px-3 py-3">
-                  <p className="text-[11px] text-white/40">好友 VIP</p>
+                  <p className="text-[11px] text-white/40">{t("account.friendVip")}</p>
                   <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight text-white">
                     {inviteVipCount}
                     <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
@@ -260,18 +268,18 @@ export function AccountSheet({
                 <p className="mt-2 text-[11px] text-white/35">
                   {user.vip
                     ? batchProgress === 0 && inviteVipCount > 0
-                      ? `本轮已满，已叠加 ${VIP_DURATION_DAYS} 天，继续邀请可再叠`
-                      : `再邀 ${remainForBatch} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
+                      ? t("account.roundFull", { days: VIP_DURATION_DAYS })
+                      : t("account.needMore", { n: remainForBatch, days: VIP_DURATION_DAYS })
                     : inviteVipCount >= inviteNeed
-                      ? "邀请奖励已解锁"
-                      : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`}
+                      ? t("account.unlocked")
+                      : t("account.needVipFriends", { n: Math.max(0, inviteNeed - inviteVipCount) })}
                 </p>
               </div>
 
               {user.inviteCode && (
                 <div className="relative mt-4 flex items-center gap-2 rounded-xl bg-black/30 p-1.5 pl-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] tracking-wide text-white/35">邀请码</p>
+                    <p className="text-[10px] tracking-wide text-white/35">{t("account.inviteCode")}</p>
                     <p className="truncate font-mono text-[15px] font-semibold tracking-[0.12em] text-white">
                       {user.inviteCode}
                     </p>
@@ -285,7 +293,7 @@ export function AccountSheet({
                     }`}
                     onClick={() => void copyInvite()}
                   >
-                    {copied ? "已复制" : "复制链接"}
+                    {copied ? t("account.copied") : t("account.copyLink")}
                   </button>
                 </div>
               )}
@@ -296,7 +304,7 @@ export function AccountSheet({
               className="mt-4 h-12 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
               onClick={onOpenVip}
             >
-              {user.vip ? `续费 VIP（+${VIP_DURATION_DAYS} 天）` : "开通 VIP"}
+              {user.vip ? t("account.renewVip", { days: VIP_DURATION_DAYS }) : t("account.openVip")}
             </button>
             {error && <p className="mt-3 text-center text-sm text-[var(--dy)]">{error}</p>}
             <button
@@ -305,7 +313,7 @@ export function AccountSheet({
               onClick={() => void logout()}
               disabled={pending}
             >
-              {pending ? "退出中…" : "退出登录"}
+              {pending ? t("account.loggingOut") : t("account.logout")}
             </button>
           </div>
         ) : (
@@ -316,7 +324,7 @@ export function AccountSheet({
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
-              placeholder="用户名"
+              placeholder={t("account.username")}
               className="h-11 rounded-full bg-white/10 px-4 text-sm outline-none placeholder:text-white/35"
             />
             <input
@@ -324,11 +332,11 @@ export function AccountSheet({
               onChange={(event) => setPassword(event.target.value)}
               type="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}
-              placeholder="密码"
+              placeholder={t("account.password")}
               className="h-11 rounded-full bg-white/10 px-4 text-sm outline-none placeholder:text-white/35"
             />
             {mode === "register" && inviteHint && (
-              <p className="text-center text-xs text-white/45">将使用邀请码 {inviteHint}</p>
+              <p className="text-center text-xs text-white/45">{t("account.inviteHint", { code: inviteHint })}</p>
             )}
             {error && <p className="text-sm text-[var(--dy)]">{error}</p>}
             <button
@@ -336,7 +344,7 @@ export function AccountSheet({
               className="h-11 rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white disabled:opacity-60"
               disabled={pending}
             >
-              {pending ? "请稍候" : mode === "login" ? "登录" : "注册"}
+              {pending ? t("account.wait") : mode === "login" ? t("account.login") : t("account.register")}
             </button>
             <button
               type="button"
@@ -346,7 +354,7 @@ export function AccountSheet({
                 setError(null)
               }}
             >
-              {mode === "login" ? "没有账号？去注册" : "已有账号？去登录"}
+              {mode === "login" ? t("account.noAccount") : t("account.hasAccount")}
             </button>
           </form>
         )}

@@ -243,3 +243,19 @@ export function IconToFirst({ className = "h-5 w-5" }: IconProps) {
     </svg>
   )
 }
+
+/** 语言切换 */
+export function IconLang({ className = "h-5 w-5" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none">
+      <circle cx="12" cy="12" r="8.2" stroke="#fff" strokeWidth="1.7" />
+      <path d="M3.8 12h16.4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M12 3.8c2.2 2.4 3.4 5.2 3.4 8.2S14.2 17.8 12 20.2C9.8 17.8 8.6 15 8.6 12S9.8 6.2 12 3.8Z"
+        stroke="#fff"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}

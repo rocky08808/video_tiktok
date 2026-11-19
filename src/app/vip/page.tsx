@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { storeInviteCode } from "@/components/AccountSheet"
 import { BrandLogo } from "@/components/BrandLogo"
+import { useT } from "@/components/LocaleProvider"
 import { fetchClientSettings } from "@/lib/client-settings"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import { noteAuthResponse } from "@/lib/session-client"
@@ -18,6 +19,7 @@ import {
 } from "@/lib/vip"
 
 export default function VipPage() {
+  const t = useT()
   const fallbackAddress = vipUsdtAddress()
   const supportBase = tgSupportUrl()
   const [username, setUsername] = useState<string | null>(null)
@@ -31,6 +33,7 @@ export default function VipPage() {
   const [inviteNeed, setInviteNeed] = useState(DEFAULT_APP_SETTINGS.inviteNeed)
   const [freeDailyVideos, setFreeDailyVideos] = useState(DEFAULT_APP_SETTINGS.freeDailyVideos)
   const [freeDailyPics, setFreeDailyPics] = useState(DEFAULT_APP_SETTINGS.freeDailyPics)
+  const [freeDailyMovies, setFreeDailyMovies] = useState(DEFAULT_APP_SETTINGS.freeDailyMovies)
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [copied, setCopied] = useState<"address" | "invite" | null>(null)
@@ -64,6 +67,7 @@ export default function VipPage() {
     void fetchClientSettings().then((settings) => {
       setFreeDailyVideos(settings.freeDailyVideos)
       setFreeDailyPics(settings.freeDailyPics)
+      setFreeDailyMovies(settings.freeDailyMovies)
       setInviteNeed(settings.inviteNeed)
       setAmount((current) => (current === DEFAULT_APP_SETTINGS.vipPriceUsdt ? settings.vipPriceUsdt : current))
     })
@@ -216,11 +220,11 @@ export default function VipPage() {
     <div className="flex h-dvh w-full items-center justify-center bg-[#120e16] text-white">
       <div className="stage relative flex h-dvh w-full flex-col overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:ring-1 sm:ring-white/10">
         <header className="relative z-10 flex shrink-0 items-center justify-between px-4 pt-[max(14px,env(safe-area-inset-top))]">
-          <Link href="/" className="grid h-10 w-10 place-items-center text-white/70" aria-label="返回">
+          <Link href="/" className="grid h-10 w-10 place-items-center text-white/70" aria-label={t("vipPage.back")}>
             ←
           </Link>
           <h1 className="text-sm font-medium tracking-wide text-white/90">
-            {vip ? "续费 VIP" : "开通 VIP"}
+            {vip ? t("vipPage.renew") : t("vipPage.title")}
           </h1>
           <span className="w-10" />
         </header>
@@ -262,7 +266,7 @@ export default function VipPage() {
                 href="/"
                 className="mt-10 grid h-12 w-full place-items-center rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
               >
-                返回首页
+                {t("vipPage.backHome")}
               </Link>
             </div>
           ) : (
@@ -272,6 +276,7 @@ export default function VipPage() {
                   <p className="text-[12px] text-white/40">普通用户</p>
                   <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-white/70">
                     <li>每天 {freeDailyVideos} 条视频</li>
+                    <li>每天 {freeDailyMovies} 部电影</li>
                     <li>不能收藏</li>
                     <li>每天 {freeDailyPics} 张美图</li>
                   </ul>
@@ -280,6 +285,7 @@ export default function VipPage() {
                   <p className="text-[12px] font-semibold text-[#25f4ee]">VIP</p>
                   <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-white">
                     <li>无限观看</li>
+                    <li>无限电影</li>
                     <li>可收藏视频</li>
                     <li>无限美图</li>
                   </ul>

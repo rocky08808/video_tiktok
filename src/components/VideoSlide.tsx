@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react"
 import { HlsVideo } from "@/components/HlsVideo"
 import { IconBookmark, IconHeart, IconLoopMode, IconPlay } from "@/components/icons"
+import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
 import type { VideoItem } from "@/lib/types"
 
@@ -41,6 +42,7 @@ export function VideoSlide({
   onToggleLoop,
   onEnded,
 }: Props) {
+  const t = useT()
   const rootRef = useRef<HTMLElement>(null)
   const startRef = useRef<{ x: number; y: number } | null>(null)
   const lastTapRef = useRef(0)
@@ -219,10 +221,8 @@ export function VideoSlide({
       {failed && active && (
         <div className="absolute inset-0 z-30 grid place-items-center bg-black/55 px-8 text-center">
           <div>
-            <p className="text-base font-medium">这段视频打不开</p>
-            <p className="mt-2 text-sm leading-6 text-white/65">
-              可能是网络不稳或地址失效，点下面重试；还不行就先滑下一条。
-            </p>
+            <p className="text-base font-medium">{t("video.cannotPlay")}</p>
+            <p className="mt-2 text-sm leading-6 text-white/65">{t("video.cannotPlayHint")}</p>
             <button
               type="button"
               className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
@@ -231,7 +231,7 @@ export function VideoSlide({
                 setEpoch((value) => value + 1)
               }}
             >
-              重试
+              {t("video.retry")}
             </button>
           </div>
         </div>
@@ -265,7 +265,7 @@ export function VideoSlide({
               className="pointer-events-auto mt-1 text-sm font-semibold text-white/80"
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? "收起" : "展开"}
+              {expanded ? t("video.collapse") : t("video.expand")}
             </button>
           )}
         </div>
@@ -282,11 +282,11 @@ export function VideoSlide({
             }}
             aria-hidden={engageHidden}
           >
-            <RailButton label="点赞" count={video.likes} pressed={liked} onClick={toggleLike}>
+            <RailButton label={t("video.like")} count={video.likes} pressed={liked} onClick={toggleLike}>
               <IconHeart filled={liked} />
             </RailButton>
             <RailButton
-              label="收藏"
+              label={t("video.save")}
               count={video.bookmarks}
               pressed={saved}
               onClick={onToggleSaved}
@@ -304,7 +304,7 @@ export function VideoSlide({
             aria-hidden={chromeHidden}
           >
             <RailButton
-              label={loopOne ? "循环" : "连播"}
+              label={loopOne ? t("video.loop") : t("video.continuous")}
               pressed={loopOne}
               onClick={onToggleLoop}
             >

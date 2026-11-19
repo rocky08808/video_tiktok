@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { IconBookmark, IconHeart, IconPlay } from "@/components/icons"
+import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
 import type { MovieItem, MoviesPageResponse } from "@/lib/movies"
 
@@ -24,6 +25,7 @@ export function MovieSavedSheet({
   onToggleLike: (id: string) => void
   onToggleSaved: (id: string) => void
 }) {
+  const t = useT()
   const [movies, setMovies] = useState<MovieItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -85,7 +87,7 @@ export function MovieSavedSheet({
         setMovies(page)
       } catch {
         if (!alive) return
-        setError("收藏列表加载失败")
+        setError(t("movie.savedLoadFailed"))
         setMovies([])
       } finally {
         if (alive) setLoading(false)
@@ -125,14 +127,14 @@ export function MovieSavedSheet({
             type="button"
             className="grid h-10 w-10 place-items-center text-xl text-white/80"
             onClick={onClose}
-            aria-label="关闭收藏"
+            aria-label={t("movie.closeSaved")}
           >
             ×
           </button>
           <div className="text-center">
-            <p className="text-sm font-semibold tracking-wide">电影收藏</p>
+            <p className="text-sm font-semibold tracking-wide">{t("movie.savedTitle")}</p>
             <p className="text-[11px] text-white/40">
-              {movies.length > 0 ? `${movies.length} 部` : "还没有收藏"}
+              {movies.length > 0 ? t("movie.savedCount", { n: movies.length }) : t("movie.noSaved")}
             </p>
           </div>
           <span className="w-10" />
@@ -147,13 +149,13 @@ export function MovieSavedSheet({
             ) : error && movies.length === 0 ? (
               <div className="grid min-h-[50dvh] place-items-center px-8 text-center">
                 <div>
-                  <p className="text-lg font-medium tracking-wide">加载失败</p>
+                  <p className="text-lg font-medium tracking-wide">{t("movie.loadFailed")}</p>
                   <p className="mt-2 text-sm leading-6 text-white/55">{error}</p>
                 </div>
               </div>
             ) : movies.length === 0 ? (
               <div className="grid min-h-[50dvh] place-items-center px-8 text-center">
-                <p className="text-lg font-medium tracking-wide">还没有收藏电影</p>
+                <p className="text-lg font-medium tracking-wide">{t("movie.noSavedMovies")}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-5">
@@ -175,7 +177,7 @@ export function MovieSavedSheet({
                         />
                       ) : (
                         <div className="grid min-h-48 w-full place-items-center bg-gradient-to-br from-[#2a1428] to-[#101820] text-sm text-white/35">
-                          暂无封面
+                          {t("movie.noCover")}
                         </div>
                       )}
                       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent opacity-90" />

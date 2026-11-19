@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { AccountSheet, storeInviteCode } from "@/components/AccountSheet"
-import { IconBookmark, IconFullscreen, IconToFirst, IconUser, IconVolume } from "@/components/icons"
+import { IconBookmark, IconFullscreen, IconLang, IconToFirst, IconUser, IconVolume } from "@/components/icons"
+import { useLocale, useT } from "@/components/LocaleProvider"
 import { MovieList } from "@/components/MovieList"
 import { MoviePlayer } from "@/components/MoviePlayer"
 import { MovieSavedSheet } from "@/components/MovieSavedSheet"
@@ -13,15 +14,19 @@ import type { MovieItem, MoviesPageResponse } from "@/lib/movies"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatCount } from "@/lib/format"
+import { detectLocale, translate } from "@/lib/i18n"
 import { readFreePicPack, writeFreePicPack } from "@/lib/pic-pack"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import { noteAuthResponse, SESSION_KICKED_EVENT } from "@/lib/session-client"
 import {
+  canWatchMovie,
   canWatchVideo,
   ensureFreePackIds,
   noteWatchedId,
+  noteWatchedMovieId,
   readFreePackIds,
   watchedCountToday,
+  watchedMovieCountToday,
 } from "@/lib/watch-limit"
 
 type Tab = "forYou" | "saved" | "movies"
@@ -186,8 +191,8 @@ async function pushMovieIds(kind: "saved" | "liked", ids: string[]) {
     counts?: Record<string, number>
     error?: string
   }
-  noteAuthResponse(response, data)
-  if (!response.ok) throw new Error(data.error || "同步失败")
+  noteAuthResponse(response)
+  if (!response.ok) throw new Error(data.error || translate(detectLocale(), "feed.syncFailed"))
   return data
 }
 
@@ -263,6 +268,8 @@ function sameIds(left: string[], right: string[]) {
 }
 
 export function Feed() {
+  const t = useT()
+  const { locale, setLocale } = useLocale()
   const router = useRouter()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -312,6 +319,7 @@ export function Feed() {
   const [picThumb, setPicThumb] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [watchBlocked, setWatchBlocked] = useState(false)
+  const [movieQuotaHit, setMovieQuotaHit] = useState(false)
   const [headerHidden, setHeaderHidden] = useState(false)
   const [limits, setLimits] = useState(DEFAULT_APP_SETTINGS)
   const [hasMore, setHasMore] = useState(true)
@@ -528,7 +536,7 @@ export function Feed() {
       } catch (reason: unknown) {
         if (!alive) return
         if (reason instanceof DOMException && reason.name === "AbortError") return
-        setError("视频列表加载失败")
+        setError(t("feed.videosLoadFailed"))
         setLoading(false)
       }
     })()
@@ -617,10 +625,10 @@ export function Feed() {
         moviesBootedRef.current = true
         setMoviesHasMore(movieHasMoreRef.current)
         setMovies(page)
-        setMoviesError(page.length === 0 ? data.error ?? "暂时没有电影" : null)
+        setMoviesError(page.length === 0 ? data.error ?? t("feed.noMovies") : null)
       } catch {
         if (!alive) return
-        setMoviesError("电影列表加载失败")
+        setMoviesError(t("feed.moviesLoadFailed"))
       } finally {
         if (alive) setMoviesLoading(false)
       }
@@ -764,6 +772,7 @@ export function Feed() {
           inviteNeed?: number
           freeDailyVideos?: number
           freeDailyPics?: number
+          freeDailyMovies?: number
           savedIds?: string[]
           likedIds?: string[]
           savedMovieIds?: string[]
@@ -781,6 +790,7 @@ export function Feed() {
         const settings = applyClientSettings({
           freeDailyVideos: data.freeDailyVideos,
           freeDailyPics: data.freeDailyPics,
+          freeDailyMovies: data.freeDailyMovies,
           inviteNeed: data.inviteNeed,
         })
         setLimits({ ...settings })
@@ -1064,11 +1074,17 @@ export function Feed() {
         const delta = event.key === "ArrowRight" ? 5 : -5
         const next = Math.min(duration, Math.max(0, element.currentTime + delta))
         if (Math.abs(next - element.currentTime) < 0.2) {
-          showToast(delta > 0 ? "已经是结尾" : "已经是开头")
+          showToast(
+            delta > 0
+              ? translate(detectLocale(), "feed.atEnd")
+              : translate(detectLocale(), "feed.atStart"),
+          )
           return
         }
         element.currentTime = next
-        showToast(`${delta > 0 ? "快进" : "快退"} ${formatClock(next)}`)
+        showToast(
+          `${delta > 0 ? translate(detectLocale(), "feed.seekForward") : translate(detectLocale(), "feed.seekBack")} ${formatClock(next)}`,
+        )
       } else if (event.key === " ") {
         event.preventDefault()
         const nextPaused = !pausedRef.current
@@ -1141,7 +1157,7 @@ export function Feed() {
       setTab("forYou")
       setActive(forYouIndex.current)
     }
-    showToast("账号已在别处登录", 2400)
+    showToast(translate(detectLocale(), "feed.kicked"), 2400)
     window.setTimeout(() => {
       kickedLock.current = false
     }, 2500)
@@ -1200,7 +1216,7 @@ function activeVideo() {
       } catch {
         // ignore
       }
-      showToast(next ? "单条循环" : "播完下一条")
+      showToast(next ? t("feed.loopOne") : t("feed.loopNext"))
       return next
     })
   }
@@ -1491,8 +1507,21 @@ function activeVideo() {
       .catch(() => {})
   }
 
+  function openMovie(movie: MovieItem) {
+    const vip = user?.vip === true
+    if (!canWatchMovie(movie.id, vip)) {
+      setMovieQuotaHit(true)
+      setVipOpen(true)
+      return
+    }
+    if (!vip) noteWatchedMovieId(movie.id)
+    setMovieQuotaHit(false)
+    setPlayingMovie(movie)
+  }
+
   function goVip() {
     setVipOpen(false)
+    setMovieQuotaHit(false)
     setProfileOpen(false)
     setPicsOpen(false)
     router.push("/vip")
@@ -1632,20 +1661,20 @@ function activeVideo() {
           ) : error && videos.length === 0 ? (
             <div className="feed-slide grid place-items-center px-8 text-center">
               <div>
-                <p className="text-lg font-medium">没有播出来</p>
+                <p className="text-lg font-medium">{t("feed.loadFailed")}</p>
                 <p className="mt-2 text-sm leading-6 text-white/60">{error}</p>
               </div>
             </div>
           ) : tab === "saved" && authReady && !user?.vip ? (
             <div className="feed-slide grid place-items-center px-8 text-center">
               <div>
-                <p className="text-lg font-medium">收藏只对 VIP 开放</p>
+                <p className="text-lg font-medium">{t("feed.savedVipOnly")}</p>
                 <button
                   type="button"
                   className="mt-4 rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-4 py-1.5 text-sm font-semibold text-white"
                   onClick={() => (user ? goVip() : setProfileOpen(true))}
                 >
-                  {user ? "开通 VIP" : "去登录"}
+                  {user ? t("feed.openVip") : t("feed.goLogin")}
                 </button>
               </div>
             </div>
@@ -1656,13 +1685,13 @@ function activeVideo() {
           ) : list.length === 0 ? (
             <div className="feed-slide grid place-items-center px-8 text-center">
               <div>
-                <p className="text-lg font-medium">还没有收藏</p>
+                <p className="text-lg font-medium">{t("feed.noSaved")}</p>
                 <button
                   type="button"
                   className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
                   onClick={() => selectTab("forYou")}
                 >
-                  去推荐看看
+                  {t("feed.goForYou")}
                 </button>
               </div>
             </div>
@@ -1731,7 +1760,7 @@ function activeVideo() {
               loadingMore={moviesLoadingMore}
               error={moviesError}
               hasMore={moviesHasMore}
-              onOpen={setPlayingMovie}
+              onOpen={openMovie}
               onLoadMore={loadMoreMovies}
               likedIds={likedMovieIds}
               savedIds={savedMovieIds}
@@ -1764,35 +1793,35 @@ function activeVideo() {
           <button
             type="button"
             className="pointer-events-auto relative mt-0.5 flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl ring-1 ring-white/25"
-            aria-label="美图"
+            aria-label={t("nav.pics")}
             onClick={() => setPicsOpen(true)}
           >
             {picThumb ? (
               <img src={picThumb} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
             ) : (
               <span className="grid h-full w-full place-items-center bg-gradient-to-br from-[#fe2c55]/80 to-[#25f4ee]/70 text-[10px] font-semibold tracking-wide">
-                美图
+                {t("nav.pics")}
               </span>
             )}
             {picThumb && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/45 py-px text-center text-[9px] font-semibold leading-none text-white/95">
-                美图
+                {t("nav.pics")}
               </span>
             )}
           </button>
           <nav className="pointer-events-auto flex items-center gap-5 pt-1 text-[17px] font-semibold">
             <TabButton active={tab === "movies"} onClick={() => selectTab("movies")}>
-              电影
+              {t("tab.movies")}
             </TabButton>
             <TabButton
               active={tab === "saved"}
               badge={user?.vip && savedIds.length > 0 ? formatCount(savedIds.length) : undefined}
               onClick={() => selectTab("saved")}
             >
-              收藏
+              {t("tab.saved")}
             </TabButton>
             <TabButton active={tab === "forYou"} onClick={() => selectTab("forYou")}>
-              推荐
+              {t("tab.forYou")}
             </TabButton>
           </nav>
           <div className="flex items-center">
@@ -1801,7 +1830,7 @@ function activeVideo() {
                 <button
                   type="button"
                   className="pointer-events-auto hidden h-10 w-10 place-items-center sm:grid"
-                  aria-label={fullscreen ? "退出全屏" : "全屏"}
+                  aria-label={fullscreen ? t("nav.exitFullscreen") : t("nav.fullscreen")}
                   onClick={toggleFullscreen}
                 >
                   <IconFullscreen active={fullscreen} />
@@ -1809,15 +1838,22 @@ function activeVideo() {
                 <button
                   type="button"
                   className="pointer-events-auto grid h-10 w-10 place-items-center"
-                  aria-label={muted ? "打开声音" : "静音"}
+                  aria-label={muted ? t("nav.unmute") : t("nav.mute")}
                   onClick={toggleMute}
                 >
                   <IconVolume muted={muted} />
                 </button>
               </>
-            ) : (
-              <span className="h-10 w-10" aria-hidden />
-            )}
+            ) : null}
+            <button
+              type="button"
+              className="pointer-events-auto grid h-10 w-10 place-items-center"
+              aria-label={locale === "zh" ? t("account.langEn") : t("account.langZh")}
+              title={t("account.language")}
+              onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
+            >
+              <IconLang className="h-5 w-5" />
+            </button>
           </div>
         </header>
 
@@ -1838,7 +1874,7 @@ function activeVideo() {
               <button
                 type="button"
                 className="pointer-events-auto grid h-9 w-9 place-items-center rounded-full bg-black/35 ring-1 ring-white/25 backdrop-blur-sm"
-                aria-label="回到第一条"
+                aria-label={t("nav.backToFirst")}
                 onClick={jumpSavedToFirst}
               >
                 <IconToFirst />
@@ -1859,7 +1895,7 @@ function activeVideo() {
             {tab === "movies" ? (
               <button
                 type="button"
-                aria-label="电影收藏"
+                aria-label={t("nav.movieSaved")}
                 className="grid h-11 w-11 place-items-center rounded-full bg-black/45 ring-1 ring-white/25 backdrop-blur-md"
                 onClick={() => setMovieSavedOpen(true)}
               >
@@ -1868,7 +1904,7 @@ function activeVideo() {
             ) : null}
             <button
               type="button"
-              aria-label="个人中心"
+              aria-label={t("nav.profile")}
               className="grid place-items-center"
               onClick={() => setProfileOpen(true)}
             >
@@ -1881,15 +1917,13 @@ function activeVideo() {
 
         {showBanner && (
           <div className="absolute inset-x-3 top-14 z-30 flex items-start gap-3 rounded-2xl bg-black/60 px-3 py-2 text-[12px] leading-5 text-white/90 backdrop-blur-md">
-            <p className="flex-1">
-              当前是示例视频，正式片源配置好后这里会换成你的内容。
-            </p>
+            <p className="flex-1">{t("feed.demoBanner")}</p>
             <button
               type="button"
               className="shrink-0 text-white/70"
               onClick={() => setBanner(false)}
             >
-              关闭
+              {t("feed.dismiss")}
             </button>
           </div>
         )}
@@ -1900,7 +1934,7 @@ function activeVideo() {
             className="absolute left-1/2 top-[4.5rem] z-30 -translate-x-1/2 rounded-full bg-white/15 px-3 py-1 text-xs backdrop-blur"
             onClick={toggleMute}
           >
-            点击打开声音
+            {t("feed.tapUnmute")}
           </button>
         )}
 
@@ -1933,16 +1967,19 @@ function activeVideo() {
           likedIds={likedMovieIds}
           knownMovies={playingMovie ? [playingMovie, ...movies] : movies}
           onClose={() => setMovieSavedOpen(false)}
-          onOpen={setPlayingMovie}
+          onOpen={openMovie}
           onToggleLike={toggleMovieLike}
           onToggleSaved={toggleMovieSaved}
         />
         <div inert={!vipOpen} className={`absolute inset-0 z-40 ${vipOpen ? "" : "pointer-events-none"}`}>
           <button
             type="button"
-            aria-label="关闭 VIP"
+            aria-label={t("vipSheet.close")}
             className={`absolute inset-0 bg-black/45 transition-opacity ${vipOpen ? "opacity-100" : "opacity-0"}`}
-            onClick={() => setVipOpen(false)}
+            onClick={() => {
+              setVipOpen(false)
+              setMovieQuotaHit(false)
+            }}
           />
           <section
             className={`absolute inset-x-0 bottom-0 rounded-t-2xl bg-[#161018] px-5 pt-4 pb-[max(20px,env(safe-area-inset-bottom))] text-white shadow-2xl transition-transform duration-300 ${
@@ -1950,28 +1987,39 @@ function activeVideo() {
             }`}
             aria-hidden={!vipOpen}
           >
-            <h2 className="text-center text-base font-semibold">开通 VIP</h2>
-            {watchBlocked && (
+            <h2 className="text-center text-base font-semibold">{t("vipSheet.title")}</h2>
+            {movieQuotaHit ? (
               <p className="mt-2 text-center text-sm text-[#ff8aa3]">
-                今日免费 {limits.freeDailyVideos} 条已看完（已看{" "}
-                {Math.min(limits.freeDailyVideos, watchedCountToday())} 条）
+                {t("vipSheet.freeMoviesUsed", {
+                  n: limits.freeDailyMovies,
+                  watched: Math.min(limits.freeDailyMovies, watchedMovieCountToday()),
+                })}
               </p>
-            )}
+            ) : watchBlocked ? (
+              <p className="mt-2 text-center text-sm text-[#ff8aa3]">
+                {t("vipSheet.freeUsed", {
+                  n: limits.freeDailyVideos,
+                  watched: Math.min(limits.freeDailyVideos, watchedCountToday()),
+                })}
+              </p>
+            ) : null}
             <div className="mt-4 grid grid-cols-2 gap-2 text-left text-[13px]">
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3">
-                <p className="text-[12px] text-white/40">普通用户</p>
+                <p className="text-[12px] text-white/40">{t("vipSheet.freeUser")}</p>
                 <ul className="mt-2 space-y-1.5 text-white/65">
-                  <li>每天 {limits.freeDailyVideos} 条视频</li>
-                  <li>不能收藏</li>
-                  <li>每天 {limits.freeDailyPics} 张美图</li>
+                  <li>{t("vipSheet.freeVideos", { n: limits.freeDailyVideos })}</li>
+                  <li>{t("vipSheet.freeMovies", { n: limits.freeDailyMovies })}</li>
+                  <li>{t("vipSheet.noSave")}</li>
+                  <li>{t("vipSheet.freePics", { n: limits.freeDailyPics })}</li>
                 </ul>
               </div>
               <div className="rounded-2xl border border-[#25f4ee]/25 bg-[linear-gradient(160deg,rgba(254,44,85,0.14),rgba(37,244,238,0.1))] px-3 py-3">
-                <p className="text-[12px] font-semibold text-[#25f4ee]">VIP</p>
+                <p className="text-[12px] font-semibold text-[#25f4ee]">{t("vipSheet.vipUser")}</p>
                 <ul className="mt-2 space-y-1.5 text-white">
-                  <li>无限观看</li>
-                  <li>可收藏视频</li>
-                  <li>无限美图</li>
+                  <li>{t("vipSheet.unlimitedWatch")}</li>
+                  <li>{t("vipSheet.unlimitedMovies")}</li>
+                  <li>{t("vipSheet.canSave")}</li>
+                  <li>{t("vipSheet.unlimitedPics")}</li>
                 </ul>
               </div>
             </div>
@@ -1980,7 +2028,7 @@ function activeVideo() {
               className="mt-5 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold text-white"
               onClick={goVip}
             >
-              开通 VIP
+              {t("vipSheet.cta")}
             </button>
           </section>
         </div>

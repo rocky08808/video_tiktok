@@ -13,8 +13,16 @@ function freePackKey() {
   return `sk_free_${dayKey()}`
 }
 
+function movieWatchKey() {
+  return `sk_movie_watch_${dayKey()}`
+}
+
 function freeDailyLimit() {
   return readClientSettings().freeDailyVideos
+}
+
+function freeMovieDailyLimit() {
+  return readClientSettings().freeDailyMovies
 }
 
 /** 清掉非今日的免费包 / 观看记录，第二天自动换新 */
@@ -22,12 +30,14 @@ function purgeOldDayCaches() {
   try {
     const keepWatch = watchKey()
     const keepFree = freePackKey()
+    const keepMovie = movieWatchKey()
     const remove: string[] = []
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index)
       if (!key) continue
       if (key.startsWith("sk_watch_") && key !== keepWatch) remove.push(key)
       if (key.startsWith("sk_free_") && key !== keepFree) remove.push(key)
+      if (key.startsWith("sk_movie_watch_") && key !== keepMovie) remove.push(key)
     }
     for (const key of remove) localStorage.removeItem(key)
   } catch {
@@ -112,4 +122,30 @@ export function watchedCountToday() {
 
 export function freePackFull() {
   return readFreePackIds().length >= freeDailyLimit()
+}
+
+export function readWatchedMovieIds() {
+  purgeOldDayCaches()
+  return readIdList(movieWatchKey())
+}
+
+export function noteWatchedMovieId(id: string) {
+  purgeOldDayCaches()
+  const limit = freeMovieDailyLimit()
+  const current = readIdList(movieWatchKey())
+  if (current.includes(id)) return current
+  const next = [...current, id].slice(0, Math.max(limit, current.length + 1))
+  writeIdList(movieWatchKey(), next)
+  return next
+}
+
+export function canWatchMovie(id: string, vip: boolean) {
+  if (vip) return true
+  const watched = readWatchedMovieIds()
+  if (watched.includes(id)) return true
+  return watched.length < freeMovieDailyLimit()
+}
+
+export function watchedMovieCountToday() {
+  return readWatchedMovieIds().length
 }

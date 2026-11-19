@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { IconBookmark, IconHeart } from "@/components/icons"
+import { useT } from "@/components/LocaleProvider"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
+import { detectLocale, translate } from "@/lib/i18n"
 import { formatCount } from "@/lib/format"
 import { freePicLimit, readFreePicPack, writeFreePicPack, type PackedPic } from "@/lib/pic-pack"
 import { noteAuthResponse } from "@/lib/session-client"
@@ -161,8 +163,8 @@ async function pushPicIds(kind: "liked" | "saved", ids: string[]) {
     counts?: Record<string, number>
     error?: string
   }
-  if (noteAuthResponse(response)) throw new Error("请先登录")
-  if (!response.ok) throw new Error(data.error || "同步失败")
+  if (noteAuthResponse(response)) throw new Error(translate(detectLocale(), "pics.loginFirst"))
+  if (!response.ok) throw new Error(data.error || translate(detectLocale(), "pics.syncFailed"))
   return data
 }
 
@@ -181,6 +183,7 @@ export function PicSheet({
   onOpenVip: () => void
   onOpenLogin: () => void
 }) {
+  const t = useT()
   const [pics, setPics] = useState<PicItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -768,20 +771,22 @@ export function PicSheet({
               }
               onClose()
             }}
-            aria-label={browsingSaved ? "返回美图" : "关闭美图"}
+            aria-label={browsingSaved ? t("pics.back") : t("pics.close")}
           >
             {browsingSaved ? "‹" : "×"}
           </button>
           <div className="text-center">
-            <p className="text-sm font-semibold tracking-wide">{browsingSaved ? "收藏" : "美图"}</p>
+            <p className="text-sm font-semibold tracking-wide">
+              {browsingSaved ? t("pics.saved") : t("pics.title")}
+            </p>
             <p className="text-[11px] text-white/40">
               {pics.length > 0
                 ? `${index + 1} / ${pics.length}`
                 : browsingSaved
-                  ? "还没有收藏"
+                  ? t("pics.noSaved")
                   : limited
-                    ? `今日免费 ${freePicLimit()} 张`
-                    : "精选美图"}
+                    ? t("pics.freeToday", { n: freePicLimit() })
+                    : t("pics.featured")}
             </p>
           </div>
           {vip && !browsingSaved ? (
@@ -791,7 +796,7 @@ export function PicSheet({
               disabled={loading || headerHidden}
               onClick={() => void loadPics(true)}
             >
-              换一批
+              {t("pics.refresh")}
             </button>
           ) : (
             <span className="w-10" />
@@ -828,7 +833,7 @@ export function PicSheet({
           ) : error && pics.length === 0 ? (
             <div className="grid h-full place-items-center px-8 text-center">
               <div>
-                <p className="text-lg font-medium">美图加载失败</p>
+                <p className="text-lg font-medium">{t("pics.loadFailed")}</p>
                 <p className="mt-2 text-sm leading-6 text-white/55">{error}</p>
               </div>
             </div>
@@ -902,10 +907,10 @@ export function PicSheet({
                 headerHidden ? "pointer-events-none" : "pointer-events-auto"
               }`}
             >
-              <RailButton label="点赞" count={current.likes} pressed={liked} onClick={toggleLike}>
+              <RailButton label={t("pics.like")} count={current.likes} pressed={liked} onClick={toggleLike}>
                 <IconHeart filled={liked} />
               </RailButton>
-              <RailButton label="收藏" count={current.bookmarks} pressed={saved} onClick={toggleSaved}>
+              <RailButton label={t("pics.save")} count={current.bookmarks} pressed={saved} onClick={toggleSaved}>
                 <IconBookmark filled={saved} />
               </RailButton>
             </div>
@@ -915,7 +920,11 @@ export function PicSheet({
         {loggedIn && (
           <button
             type="button"
-            aria-label={`美图收藏${savedIds.length > 0 ? ` ${savedIds.length} 张` : ""}`}
+            aria-label={
+              savedIds.length > 0
+                ? t("pics.savedAriaCount", { n: savedIds.length })
+                : t("pics.savedAria")
+            }
             className="feed-profile absolute right-4 z-30 grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white ring-1 ring-white/20 backdrop-blur-sm"
             data-hidden={headerHidden ? "true" : "false"}
             style={{
@@ -939,14 +948,14 @@ export function PicSheet({
         {limited && !browsingSaved && (
           <div className="relative z-10 shrink-0 border-t border-white/10 bg-[#141018]/95 px-5 pt-3 pb-[max(14px,env(safe-area-inset-bottom))] backdrop-blur">
             <p className="text-center text-[12px] text-white/45">
-              普通用户今日 {readClientSettings().freeDailyPics} 张 · VIP 畅看全部美图
+              {t("pics.freeBar", { n: readClientSettings().freeDailyPics })}
             </p>
             <button
               type="button"
               className="mt-2.5 h-11 w-full rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold"
               onClick={onOpenVip}
             >
-              开通 VIP 看更多
+              {t("pics.openVipMore")}
             </button>
           </div>
         )}
@@ -957,15 +966,15 @@ export function PicSheet({
               <button
                 type="button"
                 className="grid h-10 w-10 place-items-center text-xl text-white/80"
-                aria-label="关闭收藏列表"
+                aria-label={t("pics.closeSaved")}
                 onClick={() => setSavedListOpen(false)}
               >
                 ×
               </button>
               <div className="text-center">
-                <p className="text-sm font-semibold tracking-wide">美图收藏</p>
+                <p className="text-sm font-semibold tracking-wide">{t("pics.savedTitle")}</p>
                 <p className="text-[11px] text-white/40">
-                  {savedListLoading ? "加载中" : `${savedList.length} 张`}
+                  {savedListLoading ? t("pics.loading") : t("pics.count", { n: savedList.length })}
                 </p>
               </div>
               <span className="w-10" />
@@ -978,28 +987,28 @@ export function PicSheet({
               ) : savedListError && savedList.length === 0 ? (
                 <div className="grid h-full place-items-center px-8 text-center">
                   <div>
-                    <p className="text-lg font-medium">加载失败</p>
+                    <p className="text-lg font-medium">{t("movie.loadFailed")}</p>
                     <p className="mt-2 text-sm leading-6 text-white/55">{savedListError}</p>
                     <button
                       type="button"
                       className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
                       onClick={() => void loadSavedList()}
                     >
-                      重试
+                      {t("pics.retry")}
                     </button>
                   </div>
                 </div>
               ) : savedList.length === 0 ? (
                 <div className="grid h-full place-items-center px-8 text-center">
                   <div>
-                    <p className="text-lg font-medium">还没有收藏</p>
-                    <p className="mt-2 text-sm leading-6 text-white/55">在美图里点收藏，之后会出现在这里</p>
+                    <p className="text-lg font-medium">{t("pics.noSaved")}</p>
+                    <p className="mt-2 text-sm leading-6 text-white/55">{t("pics.noSavedHint")}</p>
                     <button
                       type="button"
                       className="mt-4 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
                       onClick={() => setSavedListOpen(false)}
                     >
-                      去看看
+                      {t("pics.goBrowse")}
                     </button>
                   </div>
                 </div>
@@ -1010,7 +1019,7 @@ export function PicSheet({
                       key={pic.id}
                       type="button"
                       className="relative aspect-[3/4] overflow-hidden bg-white/5"
-                      aria-label={`查看 ${pic.name}`}
+                      aria-label={t("pics.view", { name: pic.name })}
                       onClick={() => openSavedPic(pic)}
                     >
                       <img

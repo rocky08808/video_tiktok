@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { IconBookmark, IconHeart, IconPlay } from "@/components/icons"
+import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
 import type { MovieItem } from "@/lib/movies"
 
@@ -36,6 +37,7 @@ export function MovieList({
   onToggleSaved: (id: string) => void
   onHeaderHidden?: (hidden: boolean) => void
 }) {
+  const t = useT()
   const scrollerRef = useRef<HTMLDivElement>(null)
   const heightsRef = useRef<number[]>([])
   const itemsRef = useRef<Map<number, HTMLElement>>(new Map())
@@ -177,7 +179,7 @@ export function MovieList({
     return (
       <div className="movie-list-shell grid h-full place-items-center px-8 text-center">
         <div className="mx-auto w-full max-w-[650px]">
-          <p className="text-lg font-medium tracking-wide">暂时没有电影</p>
+          <p className="text-lg font-medium tracking-wide">{t("movie.noMovies")}</p>
           <p className="mt-2 text-sm leading-6 text-white/55">{error}</p>
         </div>
       </div>
@@ -187,7 +189,7 @@ export function MovieList({
   if (movies.length === 0) {
     return (
       <div className="movie-list-shell grid h-full place-items-center px-8 text-center">
-        <p className="mx-auto w-full max-w-[650px] text-lg font-medium tracking-wide">暂时没有电影</p>
+        <p className="mx-auto w-full max-w-[650px] text-lg font-medium tracking-wide">{t("movie.noMovies")}</p>
       </div>
     )
   }
@@ -223,7 +225,7 @@ export function MovieList({
                     />
                   ) : (
                     <div className="grid min-h-48 w-full place-items-center bg-gradient-to-br from-[#2a1428] to-[#101820] text-sm text-white/35">
-                      暂无封面
+                      {t("movie.noCover")}
                     </div>
                   )}
 
@@ -297,9 +299,9 @@ export function MovieList({
           {loadingMore ? (
             <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/25 border-t-white" />
           ) : hasMore ? (
-            <span className="text-[11px] tracking-[0.18em] text-white/30">下滑加载</span>
+            <span className="text-[11px] tracking-[0.18em] text-white/30">{t("movie.loadMore")}</span>
           ) : (
-            <span className="text-[11px] tracking-[0.18em] text-white/30">已经到底</span>
+            <span className="text-[11px] tracking-[0.18em] text-white/30">{t("movie.end")}</span>
           )}
         </div>
       </div>

@@ -228,6 +228,7 @@ export async function currentUser() {
     inviteNeed: settings.inviteNeed,
     freeDailyVideos: settings.freeDailyVideos,
     freeDailyPics: settings.freeDailyPics,
+    freeDailyMovies: settings.freeDailyMovies,
     savedIds,
     likedIds,
     savedPicIds,

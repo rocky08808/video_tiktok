@@ -12,6 +12,7 @@ import {
   IconSeek,
   IconVolume,
 } from "@/components/icons"
+import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
 import type { MovieItem } from "@/lib/movies"
 
@@ -30,6 +31,7 @@ export function MoviePlayer({
   onToggleLike: () => void
   onToggleSaved: () => void
 }) {
+  const t = useT()
   const stageRef = useRef<HTMLDivElement>(null)
   const seekApiRef = useRef<HlsSeekApi | null>(null)
   const trackRef = useRef<HTMLDivElement>(null)
@@ -281,8 +283,8 @@ export function MoviePlayer({
         ) : (
           <div className="absolute inset-0 grid place-items-center bg-black px-8 text-center">
             <div>
-              <p className="text-base font-medium text-white">这部电影打不开</p>
-              <p className="mt-2 text-sm leading-6 text-white/65">可能是网络不稳或地址失效，可以重试或返回列表。</p>
+              <p className="text-base font-medium text-white">{t("movie.cannotPlay")}</p>
+              <p className="mt-2 text-sm leading-6 text-white/65">{t("movie.cannotPlayHint")}</p>
               <div className="mt-4 flex items-center justify-center gap-3">
                 <button
                   type="button"
@@ -293,7 +295,7 @@ export function MoviePlayer({
                     setEpoch((value) => value + 1)
                   }}
                 >
-                  重试
+                  {t("movie.retry")}
                 </button>
                 <button
                   type="button"
@@ -303,7 +305,7 @@ export function MoviePlayer({
                     closePlayer()
                   }}
                 >
-                  返回
+                  {t("movie.back")}
                 </button>
               </div>
             </div>
@@ -335,7 +337,9 @@ export function MoviePlayer({
                 className="h-5 w-5"
               />
               <span className="text-[13px] font-semibold tracking-wide">
-                {seekHint.delta < 0 ? "快退" : "快进"} {Math.abs(seekHint.delta)} 秒
+                {seekHint.delta < 0
+                  ? t("movie.seekHintBack", { n: Math.abs(seekHint.delta) })
+                  : t("movie.seekHintForward", { n: Math.abs(seekHint.delta) })}
               </span>
             </div>
           </div>
@@ -350,7 +354,7 @@ export function MoviePlayer({
             <button
               type="button"
               className="movie-back grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.35)] ring-1 ring-white/25 backdrop-blur-md transition active:scale-95"
-              aria-label="返回列表"
+              aria-label={t("movie.backList")}
               onClick={(event) => {
                 event.stopPropagation()
                 closePlayer()
@@ -409,7 +413,7 @@ export function MoviePlayer({
               ref={trackRef}
               className={`movie-progress relative w-full touch-none select-none px-1 py-2 ${dragging ? "cursor-grabbing" : "cursor-pointer"}`}
               role="slider"
-              aria-label="播放进度"
+              aria-label={t("movie.progress")}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round((scrub ?? progress) * 100)}
@@ -471,7 +475,7 @@ export function MoviePlayer({
                 <button
                   type="button"
                   className="grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
-                  aria-label={muted ? "打开声音" : "静音"}
+                  aria-label={muted ? t("nav.unmute") : t("nav.mute")}
                   onClick={(event) => {
                     event.stopPropagation()
                     scheduleChromeHide()
@@ -486,7 +490,7 @@ export function MoviePlayer({
                 <button
                   type="button"
                   className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
-                  aria-label="快退 10 秒"
+                  aria-label={t("movie.seekBack10")}
                   onClick={(event) => {
                     event.stopPropagation()
                     seekBySeconds(-10)
@@ -498,7 +502,7 @@ export function MoviePlayer({
                 <button
                   type="button"
                   className="grid h-11 w-11 place-items-center rounded-full bg-[#fe2c55] text-white shadow-[0_8px_22px_rgba(254,44,85,0.4)] ring-1 ring-white/20 transition active:scale-95"
-                  aria-label={paused ? "播放" : "暂停"}
+                  aria-label={paused ? t("movie.play") : t("movie.pause")}
                   onClick={(event) => {
                     event.stopPropagation()
                     setPaused((value) => !value)
@@ -510,7 +514,7 @@ export function MoviePlayer({
                 <button
                   type="button"
                   className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
-                  aria-label="快进 10 秒"
+                  aria-label={t("movie.seekForward10")}
                   onClick={(event) => {
                     event.stopPropagation()
                     seekBySeconds(10)
@@ -524,7 +528,7 @@ export function MoviePlayer({
                 <button
                   type="button"
                   className="grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
-                  aria-label={fullscreen ? "退出全屏" : "全屏"}
+                  aria-label={fullscreen ? t("nav.exitFullscreen") : t("nav.fullscreen")}
                   onClick={(event) => {
                     event.stopPropagation()
                     scheduleChromeHide()

@@ -22,6 +22,7 @@ export function normalizeAppSettings(input: Partial<AppSettings> | null | undefi
   return {
     freeDailyVideos: clampInt(input?.freeDailyVideos, 1, 500, DEFAULT_APP_SETTINGS.freeDailyVideos),
     freeDailyPics: clampInt(input?.freeDailyPics, 1, 500, DEFAULT_APP_SETTINGS.freeDailyPics),
+    freeDailyMovies: clampInt(input?.freeDailyMovies, 1, 500, DEFAULT_APP_SETTINGS.freeDailyMovies),
     inviteNeed: clampInt(input?.inviteNeed, 1, 100, DEFAULT_APP_SETTINGS.inviteNeed),
     vipPriceUsdt: clampPrice(input?.vipPriceUsdt, DEFAULT_APP_SETTINGS.vipPriceUsdt),
   }
@@ -35,6 +36,7 @@ export async function getAppSettings(): Promise<AppSettings> {
     return normalizeAppSettings({
       freeDailyVideos: doc?.freeDailyVideos as number | undefined,
       freeDailyPics: doc?.freeDailyPics as number | undefined,
+      freeDailyMovies: doc?.freeDailyMovies as number | undefined,
       inviteNeed: doc?.inviteNeed as number | undefined,
       vipPriceUsdt: doc?.vipPriceUsdt as number | undefined,
     })
@@ -54,6 +56,7 @@ export async function updateAppSettings(input: Partial<AppSettings>): Promise<Ap
         key: SETTINGS_KEY,
         freeDailyVideos: next.freeDailyVideos,
         freeDailyPics: next.freeDailyPics,
+        freeDailyMovies: next.freeDailyMovies,
         inviteNeed: next.inviteNeed,
         vipPriceUsdt: next.vipPriceUsdt,
         updatedAt: new Date(),

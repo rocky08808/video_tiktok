@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next"
 import Script from "next/script"
+import { LocaleProvider } from "@/components/LocaleProvider"
 import { SITE_DESCRIPTION, SITE_NAME, SITE_TAGLINE, siteUrl } from "@/lib/site"
 import "./globals.css"
+
+const localeBoot = `(function(){try{var stored=null;try{stored=localStorage.getItem("sk_locale")}catch(e){}var locale=stored==="zh"||stored==="en"?stored:null;if(!locale){var list=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];var zh=false;for(var i=0;i<list.length;i++){if(/^zh\\b/i.test(list[i]||"")){zh=true;break}}locale=zh?"zh":"en"}document.documentElement.lang=locale==="zh"?"zh-CN":"en";document.documentElement.dataset.locale=locale}catch(e){}})();`
 
 const origin = siteUrl()
 
@@ -104,15 +107,16 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   }
 
   return (
-    <html lang="zh-CN" className="h-full">
+    <html lang="zh-CN" className="h-full" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: localeBoot }} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
       </head>
       <body className="h-dvh overflow-hidden antialiased">
-        {children}
+        <LocaleProvider>{children}</LocaleProvider>
         <Script
           src="https://cloud.webscount.com/script.js"
           strategy="afterInteractive"

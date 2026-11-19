@@ -29,12 +29,14 @@ export async function PATCH(request: Request) {
     const body = (await request.json()) as {
       freeDailyVideos?: unknown
       freeDailyPics?: unknown
+      freeDailyMovies?: unknown
       inviteNeed?: unknown
       vipPriceUsdt?: unknown
     }
     const settings = await updateAppSettings({
       freeDailyVideos: typeof body.freeDailyVideos === "number" ? body.freeDailyVideos : undefined,
       freeDailyPics: typeof body.freeDailyPics === "number" ? body.freeDailyPics : undefined,
+      freeDailyMovies: typeof body.freeDailyMovies === "number" ? body.freeDailyMovies : undefined,
       inviteNeed: typeof body.inviteNeed === "number" ? body.inviteNeed : undefined,
       vipPriceUsdt: typeof body.vipPriceUsdt === "number" ? body.vipPriceUsdt : undefined,
     })

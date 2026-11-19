@@ -2,6 +2,11 @@
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react"
 import type Hls from "hls.js"
+import { detectLocale, translate } from "@/lib/i18n"
+
+function t(key: string) {
+  return translate(detectLocale(), key)
+}
 
 export type HlsSeekApi = {
   seekRatio: (ratio: number) => void
@@ -207,7 +212,7 @@ export function HlsVideo({
           if (activeRef.current && !pausedRef.current) requestPlay("native")
           return
         }
-        onErrorRef.current("当前浏览器不能播放 HLS")
+        onErrorRef.current(t("hls.noHls"))
         return
       }
 
@@ -232,7 +237,7 @@ export function HlsVideo({
       const fail = () => {
         player.destroy()
         if (playerRef.current === player) playerRef.current = null
-        onErrorRef.current("视频加载失败")
+        onErrorRef.current(t("hls.loadFailed"))
       }
       player.on(HlsCtor.Events.MANIFEST_PARSED, () => {
         applyStartAt()
@@ -346,7 +351,7 @@ export function HlsVideo({
           onEndedRef.current?.()
         }}
         onError={() => {
-          if (nativeRef.current) onErrorRef.current("视频加载失败")
+          if (nativeRef.current) onErrorRef.current(t("hls.loadFailed"))
         }}
       />
       {poster && showPoster && (

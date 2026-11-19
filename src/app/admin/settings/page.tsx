@@ -8,6 +8,7 @@ import { DEFAULT_APP_SETTINGS, type AppSettings } from "@/lib/settings-types"
 type FormDraft = {
   freeDailyVideos: string
   freeDailyPics: string
+  freeDailyMovies: string
   inviteNeed: string
   vipPriceUsdt: string
 }
@@ -16,6 +17,7 @@ function toDraft(settings: AppSettings): FormDraft {
   return {
     freeDailyVideos: String(settings.freeDailyVideos),
     freeDailyPics: String(settings.freeDailyPics),
+    freeDailyMovies: String(settings.freeDailyMovies),
     inviteNeed: String(settings.inviteNeed),
     vipPriceUsdt: String(settings.vipPriceUsdt),
   }
@@ -43,6 +45,7 @@ function parseDraft(draft: FormDraft): AppSettings {
   return {
     freeDailyVideos: parsePositiveInt(draft.freeDailyVideos, "每天视频条数", 1, 500),
     freeDailyPics: parsePositiveInt(draft.freeDailyPics, "每天美图张数", 1, 500),
+    freeDailyMovies: parsePositiveInt(draft.freeDailyMovies, "每天电影部数", 1, 500),
     inviteNeed: parsePositiveInt(draft.inviteNeed, "邀请人数", 1, 100),
     vipPriceUsdt: parsePrice(draft.vipPriceUsdt),
   }
@@ -82,6 +85,7 @@ export default function AdminSettingsPage() {
           toDraft({
             freeDailyVideos: settings.freeDailyVideos,
             freeDailyPics: settings.freeDailyPics,
+            freeDailyMovies: settings.freeDailyMovies,
             inviteNeed: settings.inviteNeed,
             vipPriceUsdt: settings.vipPriceUsdt,
           }),
@@ -160,6 +164,18 @@ export default function AdminSettingsPage() {
                   value={form.freeDailyPics}
                   onChange={(event) =>
                     setForm((current) => ({ ...current, freeDailyPics: event.target.value }))
+                  }
+                  className="admin-field mt-2 w-full"
+                />
+              </label>
+              <label className="block text-sm">
+                <span className="text-white/50">每天电影部数</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={form.freeDailyMovies}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, freeDailyMovies: event.target.value }))
                   }
                   className="admin-field mt-2 w-full"
                 />
