@@ -221,7 +221,7 @@ export function VideoSlide({
           <div>
             <p className="text-base font-medium">这段视频打不开</p>
             <p className="mt-2 text-sm leading-6 text-white/65">
-              确认 m3u8 和分片都在 R2，并允许当前网站跨域读取。也可以临时打开 HLS_PROXY。
+              可能是网络不稳或地址失效，点下面重试；还不行就先滑下一条。
             </p>
             <button
               type="button"

@@ -1512,7 +1512,7 @@ function activeVideo() {
         {showBanner && (
           <div className="absolute inset-x-3 top-14 z-30 flex items-start gap-3 rounded-2xl bg-black/60 px-3 py-2 text-[12px] leading-5 text-white/90 backdrop-blur-md">
             <p className="flex-1">
-              正在播放公开示例流。把 m3u8 上传到 R2 后，在 .env.local 填写 NEXT_PUBLIC_R2_PUBLIC_BASE。
+              当前是示例视频，正式片源配置好后这里会换成你的内容。
             </p>
             <button
               type="button"
