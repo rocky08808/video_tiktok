@@ -3,7 +3,13 @@ import {
   getUsersCollection,
 } from "@/lib/mongo"
 
-export type ReactionKind = "video_like" | "video_save" | "pic_like" | "pic_save"
+export type ReactionKind =
+  | "video_like"
+  | "video_save"
+  | "pic_like"
+  | "pic_save"
+  | "movie_like"
+  | "movie_save"
 
 /** 单次同步请求上限，防恶意超大 body；库内条数不设硬顶 */
 export const REACTION_SYNC_MAX = 50_000
@@ -13,6 +19,8 @@ const KIND_TO_LEGACY: Record<ReactionKind, string> = {
   video_save: "savedIds",
   pic_like: "likedPicIds",
   pic_save: "savedPicIds",
+  movie_like: "likedMovieIds",
+  movie_save: "savedMovieIds",
 }
 
 export function normalizeReactionIds(value: unknown, max = REACTION_SYNC_MAX) {

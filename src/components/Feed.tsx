@@ -3,9 +3,13 @@
 import { useRouter } from "next/navigation"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { AccountSheet, storeInviteCode } from "@/components/AccountSheet"
-import { IconFullscreen, IconToFirst, IconUser, IconVolume } from "@/components/icons"
+import { IconBookmark, IconFullscreen, IconToFirst, IconUser, IconVolume } from "@/components/icons"
+import { MovieList } from "@/components/MovieList"
+import { MoviePlayer } from "@/components/MoviePlayer"
+import { MovieSavedSheet } from "@/components/MovieSavedSheet"
 import { PicSheet } from "@/components/PicSheet"
 import { VideoSlide } from "@/components/VideoSlide"
+import type { MovieItem, MoviesPageResponse } from "@/lib/movies"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatCount } from "@/lib/format"
@@ -20,14 +24,17 @@ import {
   watchedCountToday,
 } from "@/lib/watch-limit"
 
-type Tab = "forYou" | "saved"
+type Tab = "forYou" | "saved" | "movies"
 
 const SAVED_KEY = "sk_saved"
 const LIKED_KEY = "sk_liked"
+const MOVIE_SAVED_KEY = "sk_movie_saved"
+const MOVIE_LIKED_KEY = "sk_movie_liked"
 const LOOP_KEY = "sk_loop_one"
 const SAVED_CURSOR_KEY = "sk_saved_cursor"
 const VIDEO_SEEN_KEY = "sk_video_seen"
 const VIDEO_PAGE_SIZE = 40
+const MOVIE_PAGE_SIZE = 40
 /** 与服务端一致：一轮内尽量排除整库已看过的 */
 const VIDEO_EXCLUDE_MAX = 50_000
 const LOAD_MORE_REMAINING = 8
@@ -144,12 +151,44 @@ function clearLocalAuthData() {
   try {
     localStorage.removeItem(SAVED_KEY)
     localStorage.removeItem(LIKED_KEY)
+    localStorage.removeItem(MOVIE_SAVED_KEY)
+    localStorage.removeItem(MOVIE_LIKED_KEY)
     localStorage.removeItem("sk_pic_liked")
     localStorage.removeItem("sk_pic_saved")
     sessionStorage.removeItem("sk_pics_vip")
   } catch {
     // ignore
   }
+}
+
+function readLocalMovieSaved() {
+  return readLocalIds(MOVIE_SAVED_KEY)
+}
+
+function readLocalMovieLiked() {
+  return readLocalIds(MOVIE_LIKED_KEY)
+}
+
+async function pushMovieIds(kind: "saved" | "liked", ids: string[]) {
+  try {
+    localStorage.setItem(kind === "saved" ? MOVIE_SAVED_KEY : MOVIE_LIKED_KEY, JSON.stringify(ids))
+  } catch {
+    // ignore
+  }
+  const response = await fetch(kind === "saved" ? "/api/auth/movie-saved" : "/api/auth/movie-likes", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(kind === "saved" ? { savedMovieIds: ids } : { likedMovieIds: ids }),
+  })
+  const data = (await response.json()) as {
+    savedMovieIds?: string[]
+    likedMovieIds?: string[]
+    counts?: Record<string, number>
+    error?: string
+  }
+  noteAuthResponse(response, data)
+  if (!response.ok) throw new Error(data.error || "同步失败")
+  return data
 }
 
 function rememberCounts(
@@ -232,11 +271,18 @@ export function Feed() {
   const savedIndex = useRef(0)
   const savedRestoreRef = useRef(true)
   const [videos, setVideos] = useState<VideoItem[]>([])
+  const [movies, setMovies] = useState<MovieItem[]>([])
+  const [playingMovie, setPlayingMovie] = useState<MovieItem | null>(null)
+  const [movieSavedOpen, setMovieSavedOpen] = useState(false)
   /** 收藏专用目录，不并入推荐流，避免刷到一堆收藏 */
   const [savedCatalog, setSavedCatalog] = useState<VideoItem[]>([])
   const [mode, setMode] = useState<VideoFeedResponse["mode"] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [moviesError, setMoviesError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [moviesLoading, setMoviesLoading] = useState(false)
+  const [moviesLoadingMore, setMoviesLoadingMore] = useState(false)
+  const [moviesHasMore, setMoviesHasMore] = useState(true)
   const [tab, setTab] = useState<Tab>("forYou")
   const [active, setActive] = useState(0)
   const [paused, setPaused] = useState(false)
@@ -247,6 +293,10 @@ export function Feed() {
   const [toastOn, setToastOn] = useState(false)
   const [savedIds, setSavedIds] = useState<string[]>([])
   const [likedIds, setLikedIds] = useState<string[]>([])
+  const [savedMovieIds, setSavedMovieIds] = useState<string[]>([])
+  const [likedMovieIds, setLikedMovieIds] = useState<string[]>([])
+  const movieSavedSeq = useRef(0)
+  const movieLikedSeq = useRef(0)
   const [profileOpen, setProfileOpen] = useState(false)
   const [user, setUser] = useState<{
     username: string
@@ -269,6 +319,7 @@ export function Feed() {
   const [loopOne, setLoopOne] = useState(true)
   const profileRef = useRef(false)
   const vipRef = useRef(false)
+  const movieSavedRef = useRef(false)
   const picsRef = useRef(false)
   const vipUserRef = useRef(false)
   const listRef = useRef<VideoItem[]>([])
@@ -283,11 +334,15 @@ export function Feed() {
   const likedSeq = useRef(0)
   const seenIdsRef = useRef<string[]>([])
   const hasMoreRef = useRef(true)
+  const movieHasMoreRef = useRef(true)
   const loadingMoreRef = useRef(false)
+  const movieLoadingMoreRef = useRef(false)
+  const moviesBootedRef = useRef(false)
   const fetchedSavedRef = useRef(new Set<string>())
-  profileRef.current = profileOpen || vipOpen || picsOpen
+  profileRef.current = profileOpen || vipOpen || picsOpen || movieSavedOpen
   vipRef.current = vipOpen
   picsRef.current = picsOpen
+  movieSavedRef.current = movieSavedOpen
   vipUserRef.current = user?.vip === true
   tabRef.current = tab
 
@@ -307,16 +362,17 @@ export function Feed() {
     }
     pausedRef.current = paused
     mutedRef.current = muted
-    profileRef.current = profileOpen || vipOpen || picsOpen
+    profileRef.current = profileOpen || vipOpen || picsOpen || movieSavedOpen
     vipRef.current = vipOpen
     picsRef.current = picsOpen
+    movieSavedRef.current = movieSavedOpen
     vipUserRef.current = user?.vip === true
     tabRef.current = tab
-  }, [active, paused, muted, profileOpen, vipOpen, picsOpen, tab, user?.vip])
+  }, [active, paused, muted, profileOpen, vipOpen, picsOpen, movieSavedOpen, tab, user?.vip])
 
   useEffect(() => {
-    if (picsOpen) setPaused(true)
-  }, [picsOpen])
+    if (picsOpen || movieSavedOpen) setPaused(true)
+  }, [picsOpen, movieSavedOpen])
 
   useEffect(() => {
     if (!user?.vip) {
@@ -358,6 +414,7 @@ export function Feed() {
         return video ? [video] : []
       })
     }
+    if (tab === "movies") return []
     if (user?.vip) return videos
     if (videos.length === 0) return []
     const ids = readFreePackIds()
@@ -545,6 +602,72 @@ export function Feed() {
   }, [active, hasMore, list.length, tab, user?.vip])
 
   useEffect(() => {
+    if (tab !== "movies") return
+    if (moviesBootedRef.current) return
+    let alive = true
+    setMoviesLoading(true)
+    setMoviesError(null)
+    void (async () => {
+      try {
+        const response = await fetch(`/api/movies?limit=${MOVIE_PAGE_SIZE}&offset=0`)
+        const data = (await response.json()) as MoviesPageResponse
+        if (!alive) return
+        const page = Array.isArray(data.movies) ? data.movies : []
+        movieHasMoreRef.current = data.hasMore !== false && page.length >= MOVIE_PAGE_SIZE
+        moviesBootedRef.current = true
+        setMoviesHasMore(movieHasMoreRef.current)
+        setMovies(page)
+        setMoviesError(page.length === 0 ? data.error ?? "暂时没有电影" : null)
+      } catch {
+        if (!alive) return
+        setMoviesError("电影列表加载失败")
+      } finally {
+        if (alive) setMoviesLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [tab])
+
+  function loadMoreMovies() {
+    if (tabRef.current !== "movies") return
+    if (!movieHasMoreRef.current || movieLoadingMoreRef.current) return
+    movieLoadingMoreRef.current = true
+    setMoviesLoadingMore(true)
+    const offset = movies.length
+    void (async () => {
+      try {
+        const response = await fetch("/api/movies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: MOVIE_PAGE_SIZE, offset }),
+        })
+        const data = (await response.json()) as MoviesPageResponse
+        const page = Array.isArray(data.movies) ? data.movies : []
+        if (page.length === 0) {
+          movieHasMoreRef.current = false
+          setMoviesHasMore(false)
+          return
+        }
+        setMovies((current) => {
+          const have = new Set(current.map((item) => item.id))
+          const extra = page.filter((item) => !have.has(item.id))
+          return extra.length > 0 ? [...current, ...extra] : current
+        })
+        movieHasMoreRef.current = data.hasMore !== false && page.length >= MOVIE_PAGE_SIZE
+        setMoviesHasMore(movieHasMoreRef.current)
+      } catch {
+        movieHasMoreRef.current = false
+        setMoviesHasMore(false)
+      } finally {
+        movieLoadingMoreRef.current = false
+        setMoviesLoadingMore(false)
+      }
+    })()
+  }
+
+  useEffect(() => {
     if (tab !== "forYou") return
     const id = list[active]?.id
     if (!id) return
@@ -552,6 +675,13 @@ export function Feed() {
     seenIdsRef.current = next
     writeVideoSeen(next)
   }, [tab, active, list])
+
+  useEffect(() => {
+    if (tab === "movies") {
+      setPaused(true)
+      applyHeaderHidden(false)
+    }
+  }, [tab])
 
   useEffect(() => {
     if (!user?.vip || savedIds.length === 0) return
@@ -615,8 +745,12 @@ export function Feed() {
   useEffect(() => {
     const local = readLocalSaved()
     const localLiked = readLocalLiked()
+    const localMovieSaved = readLocalMovieSaved()
+    const localMovieLiked = readLocalMovieLiked()
     if (local.length > 0) setSavedIds(local)
     if (localLiked.length > 0) setLikedIds(localLiked)
+    if (localMovieSaved.length > 0) setSavedMovieIds(localMovieSaved)
+    if (localMovieLiked.length > 0) setLikedMovieIds(localMovieLiked)
     const controller = new AbortController()
     fetch("/api/auth/me", { signal: controller.signal })
       .then(async (response) => {
@@ -632,6 +766,8 @@ export function Feed() {
           freeDailyPics?: number
           savedIds?: string[]
           likedIds?: string[]
+          savedMovieIds?: string[]
+          likedMovieIds?: string[]
           kicked?: boolean
         }
         noteAuthResponse(response, data)
@@ -640,6 +776,8 @@ export function Feed() {
       .then((data) => {
         const latestLocal = readLocalSaved()
         const latestLiked = readLocalLiked()
+        const latestMovieSaved = readLocalMovieSaved()
+        const latestMovieLiked = readLocalMovieLiked()
         const settings = applyClientSettings({
           freeDailyVideos: data.freeDailyVideos,
           freeDailyPics: data.freeDailyPics,
@@ -652,6 +790,8 @@ export function Feed() {
           clearLocalAuthData()
           setSavedIds([])
           setLikedIds([])
+          setSavedMovieIds([])
+          setLikedMovieIds([])
           setSavedCatalog([])
           fetchedSavedRef.current.clear()
           return
@@ -697,6 +837,51 @@ export function Feed() {
               paintFeedCounts("likes", counts)
             })
           } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
+          return merged
+        })
+        const remoteMovieSaved = Array.isArray(data.savedMovieIds)
+          ? data.savedMovieIds.filter((id) => typeof id === "string")
+          : []
+        const remoteMovieLiked = Array.isArray(data.likedMovieIds)
+          ? data.likedMovieIds.filter((id) => typeof id === "string")
+          : []
+        if (data.vip === true) {
+          setSavedMovieIds((current) => {
+            const merged = mergeIds(remoteMovieSaved, mergeIds(latestMovieSaved, current))
+            if (!sameIds(merged, remoteMovieSaved)) {
+              void pushMovieIds("saved", merged).then((payload) => {
+                paintMovieCounts("bookmarks", payload.counts)
+              })
+            } else {
+              try {
+                localStorage.setItem(MOVIE_SAVED_KEY, JSON.stringify(merged))
+              } catch {
+                // ignore
+              }
+            }
+            return merged
+          })
+        } else {
+          setSavedMovieIds([])
+          try {
+            localStorage.removeItem(MOVIE_SAVED_KEY)
+          } catch {
+            // ignore
+          }
+        }
+        setLikedMovieIds((current) => {
+          const merged = mergeIds(remoteMovieLiked, mergeIds(latestMovieLiked, current))
+          if (!sameIds(merged, remoteMovieLiked)) {
+            void pushMovieIds("liked", merged).then((payload) => {
+              paintMovieCounts("likes", payload.counts)
+            })
+          } else {
+            try {
+              localStorage.setItem(MOVIE_LIKED_KEY, JSON.stringify(merged))
+            } catch {
+              // ignore
+            }
+          }
           return merged
         })
       })
@@ -841,13 +1026,14 @@ export function Feed() {
       if (event.key === "Escape" && profileRef.current) {
         if (vipRef.current) setVipOpen(false)
         else if (picsRef.current) setPicsOpen(false)
+        else if (movieSavedRef.current) setMovieSavedOpen(false)
         else setProfileOpen(false)
         return
       }
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === "INPUT" || tag === "TEXTAREA") return
-      // 美图打开时由 PicSheet 处理上下键，其它快捷键也先让出
-      if (picsRef.current) return
+      // 美图 / 电影收藏打开时由弹层处理，其它快捷键先让出
+      if (picsRef.current || movieSavedRef.current) return
       if (profileRef.current) return
       const root = scrollerRef.current
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -911,8 +1097,8 @@ export function Feed() {
   useEffect(() => {
     const root = scrollerRef.current
     if (!root) return
-    root.style.overflowY = profileOpen || vipOpen || picsOpen ? "hidden" : "auto"
-  }, [profileOpen, vipOpen, picsOpen])
+    root.style.overflowY = profileOpen || vipOpen || picsOpen || movieSavedOpen ? "hidden" : "auto"
+  }, [profileOpen, vipOpen, picsOpen, movieSavedOpen])
 
   useLayoutEffect(() => {
     if (!toast) return
@@ -943,6 +1129,8 @@ export function Feed() {
     clearLocalAuthData()
     setSavedIds([])
     setLikedIds([])
+    setSavedMovieIds([])
+    setLikedMovieIds([])
     setSavedCatalog([])
     fetchedSavedRef.current.clear()
     setUser(null)
@@ -1095,6 +1283,81 @@ function activeVideo() {
     })
   }
 
+  function paintMovieCounts(field: "likes" | "bookmarks", counts: Record<string, number> | null | undefined) {
+    if (!counts) return
+    const paint = (movie: MovieItem) => {
+      const next = counts[movie.id]
+      if (typeof next !== "number") return movie
+      return field === "likes" ? { ...movie, likes: next } : { ...movie, bookmarks: next }
+    }
+    setMovies((current) => current.map(paint))
+    setPlayingMovie((current) => (current ? paint(current) : current))
+  }
+
+  function bumpMovieCount(id: string, field: "likes" | "bookmarks", delta: 1 | -1) {
+    const apply = (movie: MovieItem) => {
+      if (movie.id !== id) return movie
+      const value = Math.max(0, (field === "likes" ? movie.likes : movie.bookmarks) + delta)
+      return field === "likes" ? { ...movie, likes: value } : { ...movie, bookmarks: value }
+    }
+    setMovies((current) => current.map(apply))
+    setPlayingMovie((current) => (current ? apply(current) : current))
+  }
+
+  function toggleMovieLike(id: string) {
+    if (authReady && !user) {
+      setProfileOpen(true)
+      return
+    }
+    const adding = !likedMovieIds.includes(id)
+    const next = adding ? [...likedMovieIds, id] : likedMovieIds.filter((item) => item !== id)
+    const seq = ++movieLikedSeq.current
+    setLikedMovieIds(next)
+    bumpMovieCount(id, "likes", adding ? 1 : -1)
+    void pushMovieIds("liked", next)
+      .then((payload) => {
+        if (seq !== movieLikedSeq.current) return
+        if (payload.counts) paintMovieCounts("likes", payload.counts)
+        else if (Array.isArray(payload.likedMovieIds)) setLikedMovieIds(payload.likedMovieIds)
+      })
+      .catch(() => {
+        if (seq !== movieLikedSeq.current) return
+        setLikedMovieIds((current) =>
+          adding ? current.filter((item) => item !== id) : [...current, id],
+        )
+        bumpMovieCount(id, "likes", adding ? -1 : 1)
+      })
+  }
+
+  function toggleMovieSaved(id: string) {
+    if (authReady && !user) {
+      setProfileOpen(true)
+      return
+    }
+    if (authReady && user && !user.vip) {
+      setVipOpen(true)
+      return
+    }
+    const adding = !savedMovieIds.includes(id)
+    const next = adding ? [id, ...savedMovieIds.filter((item) => item !== id)] : savedMovieIds.filter((item) => item !== id)
+    const seq = ++movieSavedSeq.current
+    setSavedMovieIds(next)
+    bumpMovieCount(id, "bookmarks", adding ? 1 : -1)
+    void pushMovieIds("saved", next)
+      .then((payload) => {
+        if (seq !== movieSavedSeq.current) return
+        if (payload.counts) paintMovieCounts("bookmarks", payload.counts)
+        else if (Array.isArray(payload.savedMovieIds)) setSavedMovieIds(payload.savedMovieIds)
+      })
+      .catch(() => {
+        if (seq !== movieSavedSeq.current) return
+        setSavedMovieIds((current) =>
+          adding ? current.filter((item) => item !== id) : [id, ...current.filter((item) => item !== id)],
+        )
+        bumpMovieCount(id, "bookmarks", adding ? -1 : 1)
+      })
+  }
+
   function onAccount(
     next: {
       username: string
@@ -1110,6 +1373,8 @@ function activeVideo() {
       clearLocalAuthData()
       setSavedIds([])
       setLikedIds([])
+      setSavedMovieIds([])
+      setLikedMovieIds([])
       setSavedCatalog([])
       fetchedSavedRef.current.clear()
       setUser(null)
@@ -1132,6 +1397,8 @@ function activeVideo() {
           inviteNeed?: number
           savedIds?: string[]
           likedIds?: string[]
+          savedMovieIds?: string[]
+          likedMovieIds?: string[]
           kicked?: boolean
           username?: string | null
         }
@@ -1141,6 +1408,12 @@ function activeVideo() {
       .then((data) => {
         const remote = Array.isArray(data.savedIds) ? data.savedIds.filter((id) => typeof id === "string") : []
         const remoteLiked = Array.isArray(data.likedIds) ? data.likedIds.filter((id) => typeof id === "string") : []
+        const remoteMovieSaved = Array.isArray(data.savedMovieIds)
+          ? data.savedMovieIds.filter((id) => typeof id === "string")
+          : []
+        const remoteMovieLiked = Array.isArray(data.likedMovieIds)
+          ? data.likedMovieIds.filter((id) => typeof id === "string")
+          : []
         const vip = data.vip === true
         setUser((current) =>
           current
@@ -1166,12 +1439,27 @@ function activeVideo() {
             } else localStorage.setItem(SAVED_KEY, JSON.stringify(merged))
             return merged
           })
+          setSavedMovieIds((current) => {
+            const merged = mergeIds(remoteMovieSaved, current)
+            if (!sameIds(merged, remoteMovieSaved)) {
+              void pushMovieIds("saved", merged).then((payload) => paintMovieCounts("bookmarks", payload.counts))
+            } else {
+              try {
+                localStorage.setItem(MOVIE_SAVED_KEY, JSON.stringify(merged))
+              } catch {
+                // ignore
+              }
+            }
+            return merged
+          })
         } else {
           setSavedIds([])
+          setSavedMovieIds([])
           setSavedCatalog([])
           fetchedSavedRef.current.clear()
           try {
             localStorage.removeItem(SAVED_KEY)
+            localStorage.removeItem(MOVIE_SAVED_KEY)
           } catch {
             // ignore
           }
@@ -1184,6 +1472,19 @@ function activeVideo() {
               paintFeedCounts("likes", counts)
             })
           } else localStorage.setItem(LIKED_KEY, JSON.stringify(merged))
+          return merged
+        })
+        setLikedMovieIds((current) => {
+          const merged = mergeIds(remoteMovieLiked, current)
+          if (!sameIds(merged, remoteMovieLiked)) {
+            void pushMovieIds("liked", merged).then((payload) => paintMovieCounts("likes", payload.counts))
+          } else {
+            try {
+              localStorage.setItem(MOVIE_LIKED_KEY, JSON.stringify(merged))
+            } catch {
+              // ignore
+            }
+          }
           return merged
         })
       })
@@ -1200,14 +1501,22 @@ function activeVideo() {
   function selectTab(next: Tab) {
     if (next === tab) return
     if (tab === "forYou") forYouIndex.current = activeRef.current
-    else {
+    else if (tab === "saved") {
       savedIndex.current = activeRef.current
       const id = listRef.current[activeRef.current]?.id
       if (id) writeSavedCursor(id)
     }
-    let index = 0
+    if (tab === "movies" || next === "movies") {
+      setPlayingMovie(null)
+      setMovieSavedOpen(false)
+    }
+
+    let index = activeRef.current
     if (next === "forYou") {
       index = forYouIndex.current
+      setPaused(false)
+    } else if (next === "movies") {
+      setPaused(true)
     } else {
       savedRestoreRef.current = true
       const available = new Set<string>([
@@ -1216,23 +1525,22 @@ function activeVideo() {
       ])
       index = findSavedIndexByIds(savedIds, available, readSavedCursor(), savedIndex.current)
       savedIndex.current = index
+      setPaused(false)
     }
     activeRef.current = index
     applyHeaderHidden(false)
     setTab(next)
     setActive(index)
-    setPaused(false)
   }
 
   useLayoutEffect(() => {
+    if (tab === "movies") return
     const root = scrollerRef.current
     if (!root || root.clientHeight === 0) return
     // 虚拟窗口只有附近几条 DOM，不能用 [data-index] 数量夹索引
     const max = Math.max(0, listRef.current.length - 1)
-    const index =
-      tab === "forYou"
-        ? Math.min(forYouIndex.current, max)
-        : Math.min(savedIndex.current, max)
+    const remembered = tab === "forYou" ? forYouIndex.current : savedIndex.current
+    const index = Math.min(remembered, max)
     activeRef.current = index
     root.scrollTop = index * root.clientHeight
   }, [tab])
@@ -1305,14 +1613,19 @@ function activeVideo() {
 
   const showBanner = mode === "demo" && banner
   const chromeHidden = headerHidden && !paused && !watchBlocked && !limitBlocked
+  const topBarHidden = playingMovie || (tab === "movies" ? headerHidden : chromeHidden)
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-[#1a1020] text-white">
       <div
         ref={stageRef}
         className="stage relative h-dvh w-full overflow-hidden sm:h-[min(100dvh,860px)] sm:w-[400px] sm:rounded-[28px] sm:ring-1 sm:ring-white/10"
       >
-        <div ref={scrollerRef} className="feed-scroller">
-          {loading ? (
+        <div
+          ref={scrollerRef}
+          className={`feed-scroller${tab === "movies" ? " pointer-events-none invisible" : ""}`}
+          aria-hidden={tab === "movies"}
+        >
+          {tab === "movies" ? null : loading ? (
             <div className="feed-slide grid place-items-center">
               <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white" />
             </div>
@@ -1406,12 +1719,46 @@ function activeVideo() {
           )}
         </div>
 
+        {tab === "movies" ? (
+          <div
+            className={`absolute inset-0 z-20 ${playingMovie ? "invisible pointer-events-none" : ""}`}
+            aria-hidden={Boolean(playingMovie)}
+            inert={playingMovie ? true : undefined}
+          >
+            <MovieList
+              movies={movies}
+              loading={moviesLoading}
+              loadingMore={moviesLoadingMore}
+              error={moviesError}
+              hasMore={moviesHasMore}
+              onOpen={setPlayingMovie}
+              onLoadMore={loadMoreMovies}
+              likedIds={likedMovieIds}
+              savedIds={savedMovieIds}
+              onToggleLike={toggleMovieLike}
+              onToggleSaved={toggleMovieSaved}
+              onHeaderHidden={applyHeaderHidden}
+            />
+          </div>
+        ) : null}
+
+        {playingMovie ? (
+          <MoviePlayer
+            movie={playingMovie}
+            liked={likedMovieIds.includes(playingMovie.id)}
+            saved={savedMovieIds.includes(playingMovie.id)}
+            onClose={() => setPlayingMovie(null)}
+            onToggleLike={() => toggleMovieLike(playingMovie.id)}
+            onToggleSaved={() => toggleMovieSaved(playingMovie.id)}
+          />
+        ) : null}
+
         <header
           className="feed-header pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between px-3 pt-[max(10px,env(safe-area-inset-top))]"
-          data-hidden={chromeHidden ? "true" : "false"}
+          data-hidden={topBarHidden ? "true" : "false"}
           style={{
-            opacity: chromeHidden ? 0 : 1,
-            transform: chromeHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
+            opacity: topBarHidden ? 0 : 1,
+            transform: topBarHidden ? "translate3d(0, -110%, 0)" : "translate3d(0, 0, 0)",
           }}
         >
           <button
@@ -1433,7 +1780,10 @@ function activeVideo() {
               </span>
             )}
           </button>
-          <nav className="pointer-events-auto flex items-center gap-6 pt-1 text-[17px] font-semibold">
+          <nav className="pointer-events-auto flex items-center gap-5 pt-1 text-[17px] font-semibold">
+            <TabButton active={tab === "movies"} onClick={() => selectTab("movies")}>
+              电影
+            </TabButton>
             <TabButton
               active={tab === "saved"}
               badge={user?.vip && savedIds.length > 0 ? formatCount(savedIds.length) : undefined}
@@ -1446,22 +1796,28 @@ function activeVideo() {
             </TabButton>
           </nav>
           <div className="flex items-center">
-            <button
-              type="button"
-              className="pointer-events-auto hidden h-10 w-10 place-items-center sm:grid"
-              aria-label={fullscreen ? "退出全屏" : "全屏"}
-              onClick={toggleFullscreen}
-            >
-              <IconFullscreen active={fullscreen} />
-            </button>
-            <button
-              type="button"
-              className="pointer-events-auto grid h-10 w-10 place-items-center"
-              aria-label={muted ? "打开声音" : "静音"}
-              onClick={toggleMute}
-            >
-              <IconVolume muted={muted} />
-            </button>
+            {tab !== "movies" ? (
+              <>
+                <button
+                  type="button"
+                  className="pointer-events-auto hidden h-10 w-10 place-items-center sm:grid"
+                  aria-label={fullscreen ? "退出全屏" : "全屏"}
+                  onClick={toggleFullscreen}
+                >
+                  <IconFullscreen active={fullscreen} />
+                </button>
+                <button
+                  type="button"
+                  className="pointer-events-auto grid h-10 w-10 place-items-center"
+                  aria-label={muted ? "打开声音" : "静音"}
+                  onClick={toggleMute}
+                >
+                  <IconVolume muted={muted} />
+                </button>
+              </>
+            ) : (
+              <span className="h-10 w-10" aria-hidden />
+            )}
           </div>
         </header>
 
@@ -1491,22 +1847,36 @@ function activeVideo() {
           </div>
         )}
 
-        {!loading && (
-          <button
-            type="button"
-            aria-label="个人中心"
-            className="feed-profile absolute right-4 bottom-[max(18px,env(safe-area-inset-bottom))] z-30 grid place-items-center pb-1"
-            data-hidden={chromeHidden ? "true" : "false"}
+        {!loading && !playingMovie && (
+          <div
+            className="feed-profile absolute right-4 bottom-[max(18px,env(safe-area-inset-bottom))] z-40 flex flex-col items-center gap-3 pb-1"
+            data-hidden={topBarHidden ? "true" : "false"}
             style={{
-              opacity: chromeHidden ? 0 : 1,
-              transform: chromeHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
+              opacity: topBarHidden ? 0 : 1,
+              transform: topBarHidden ? "translate3d(120%, 0, 0)" : "translate3d(0, 0, 0)",
             }}
-            onClick={() => setProfileOpen(true)}
           >
-            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border-2 border-white/80 bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-base font-semibold text-white">
-              {user?.username ? Array.from(user.username)[0] : <IconUser />}
-            </span>
-          </button>
+            {tab === "movies" ? (
+              <button
+                type="button"
+                aria-label="电影收藏"
+                className="grid h-11 w-11 place-items-center rounded-full bg-black/45 ring-1 ring-white/25 backdrop-blur-md"
+                onClick={() => setMovieSavedOpen(true)}
+              >
+                <IconBookmark filled={savedMovieIds.length > 0} className="h-5 w-5" />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              aria-label="个人中心"
+              className="grid place-items-center"
+              onClick={() => setProfileOpen(true)}
+            >
+              <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-full border-2 border-white/80 bg-gradient-to-br from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-base font-semibold text-white">
+                {user?.username ? Array.from(user.username)[0] : <IconUser />}
+              </span>
+            </button>
+          </div>
         )}
 
         {showBanner && (
@@ -1556,6 +1926,16 @@ function activeVideo() {
           onClose={() => setPicsOpen(false)}
           onOpenVip={goVip}
           onOpenLogin={() => setProfileOpen(true)}
+        />
+        <MovieSavedSheet
+          open={movieSavedOpen}
+          savedIds={savedMovieIds}
+          likedIds={likedMovieIds}
+          knownMovies={playingMovie ? [playingMovie, ...movies] : movies}
+          onClose={() => setMovieSavedOpen(false)}
+          onOpen={setPlayingMovie}
+          onToggleLike={toggleMovieLike}
+          onToggleSaved={toggleMovieSaved}
         />
         <div inert={!vipOpen} className={`absolute inset-0 z-40 ${vipOpen ? "" : "pointer-events-none"}`}>
           <button

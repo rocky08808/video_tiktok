@@ -148,6 +148,90 @@ input {
   }
 }
 
+.movie-list-shell {
+  background-color: #140c18;
+  background-image:
+    radial-gradient(ellipse 90% 42% at 50% 0%, rgba(254, 44, 85, 0.38), transparent 62%),
+    radial-gradient(ellipse 70% 38% at 100% 100%, rgba(37, 244, 238, 0.16), transparent 58%),
+    radial-gradient(ellipse 55% 36% at 0% 78%, rgba(124, 92, 255, 0.18), transparent 60%),
+    linear-gradient(165deg, #2a1428 0%, #16101c 46%, #101820 100%);
+}
+
+.movie-chrome {
+  transition:
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+.movie-chrome[data-hidden="true"] {
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: 260ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.movie-chrome[data-hidden="true"] button {
+  pointer-events: none !important;
+}
+
+.movie-chrome-top[data-hidden="true"] {
+  transform: translate3d(0, -110%, 0);
+}
+
+.movie-chrome-engage {
+  transform: translate3d(0, -50%, 0);
+}
+
+.movie-chrome-engage[data-hidden="true"] {
+  transform: translate3d(120%, -50%, 0);
+}
+
+.movie-chrome-bottom[data-hidden="true"] {
+  transform: translate3d(0, 110%, 0);
+}
+
+.movie-progress-thumb {
+  transition:
+    left 80ms linear,
+    width 160ms ease,
+    height 160ms ease;
+}
+
+.movie-seek-hint {
+  animation: movie-seek-hint-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes movie-seek-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.movie-progress:active .movie-progress-thumb {
+  transition: width 160ms ease, height 160ms ease;
+}
+
+.movie-card {
+  animation: movie-card-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes movie-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes marquee {
   from {
     transform: translateX(0);

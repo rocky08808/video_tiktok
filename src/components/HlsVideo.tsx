@@ -1,7 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type MutableRefObject } from "react"
 import type Hls from "hls.js"
+
+export type HlsSeekApi = {
+  seekRatio: (ratio: number) => void
+  /** 相对当前时间偏移秒数（可负） */
+  seekBy: (seconds: number) => void
+}
 
 type Props = {
   src: string
@@ -11,8 +17,11 @@ type Props = {
   muted: boolean
   paused: boolean
   epoch: number
+  /** 开播跳到指定秒数（如片头） */
+  startAt?: number
   /** true：单条循环；false：播完回调 onEnded */
   loopOne?: boolean
+  seekApiRef?: MutableRefObject<HlsSeekApi | null>
   onBuffering: (buffering: boolean) => void
   onProgress: (ratio: number) => void
   onError: (message: string) => void
@@ -27,7 +36,9 @@ export function HlsVideo({
   muted,
   paused,
   epoch,
+  startAt = 0,
   loopOne = true,
+  seekApiRef,
   onBuffering,
   onProgress,
   onError,
@@ -43,6 +54,8 @@ export function HlsVideo({
   const onErrorRef = useRef(onError)
   const onEndedRef = useRef(onEnded)
   const loopOneRef = useRef(loopOne)
+  const startAtRef = useRef(Math.max(0, startAt))
+  const skippedRef = useRef(false)
   const playGenRef = useRef(0)
   const playRetryRef = useRef<number | null>(null)
   const [posterKey, setPosterKey] = useState(`${src}:${epoch}`)
@@ -61,13 +74,73 @@ export function HlsVideo({
     onErrorRef.current = onError
     onEndedRef.current = onEnded
     loopOneRef.current = loopOne
+    startAtRef.current = Math.max(0, startAt)
     if (!active) setShowPoster(Boolean(poster))
-  }, [active, paused, poster, loopOne, onBuffering, onProgress, onError, onEnded])
+  }, [active, paused, poster, startAt, loopOne, onBuffering, onProgress, onError, onEnded])
+
+  useEffect(() => {
+    if (!seekApiRef) return
+    seekApiRef.current = {
+      seekRatio: (ratio: number) => {
+        const video = videoRef.current
+        if (!video) return
+        const duration = video.duration
+        if (!Number.isFinite(duration) || duration <= 0) return
+        const next = Math.max(0, Math.min(1, ratio)) * duration
+        try {
+          video.currentTime = next
+          onProgressRef.current(next / duration)
+        } catch {
+          // ignore seek errors mid-load
+        }
+      },
+      seekBy: (seconds: number) => {
+        const video = videoRef.current
+        if (!video) return
+        const duration = video.duration
+        const current = video.currentTime
+        if (!Number.isFinite(current)) return
+        const max = Number.isFinite(duration) && duration > 0 ? duration : Number.POSITIVE_INFINITY
+        const next = Math.max(0, Math.min(max, current + seconds))
+        try {
+          video.currentTime = next
+          if (Number.isFinite(duration) && duration > 0) {
+            onProgressRef.current(next / duration)
+          }
+        } catch {
+          // ignore seek errors mid-load
+        }
+      },
+    }
+    return () => {
+      seekApiRef.current = null
+    }
+  }, [seekApiRef, src, epoch])
 
   function clearPlayRetry() {
     if (playRetryRef.current != null) {
       window.clearTimeout(playRetryRef.current)
       playRetryRef.current = null
+    }
+  }
+
+  function applyStartAt() {
+    const video = videoRef.current
+    if (!video || skippedRef.current) return
+    const at = startAtRef.current
+    if (!at || at <= 0) return
+    const duration = video.duration
+    if (Number.isFinite(duration) && duration > 0) {
+      skippedRef.current = true
+      video.currentTime = Math.min(at, Math.max(0, duration - 0.25))
+      return
+    }
+    // 时长还没出来时先跳；后续 metadata 再校正
+    skippedRef.current = true
+    try {
+      video.currentTime = at
+    } catch {
+      skippedRef.current = false
     }
   }
 
@@ -121,6 +194,7 @@ export function HlsVideo({
 
     let destroyed = false
     nativeRef.current = false
+    skippedRef.current = false
     if (activeRef.current) onBufferingRef.current(true)
 
     const attach = async () => {
@@ -138,6 +212,7 @@ export function HlsVideo({
       }
 
       let recovered = 0
+      const startPosition = startAtRef.current > 0 ? startAtRef.current : -1
       const player = new HlsCtor({
         enableWorker: false,
         loader: FetchLoader,
@@ -147,6 +222,7 @@ export function HlsVideo({
             referrerPolicy: "no-referrer",
           }),
         startLevel: 0,
+        startPosition,
         capLevelToPlayerSize: true,
         maxBufferLength: 8,
         maxMaxBufferLength: 12,
@@ -159,6 +235,7 @@ export function HlsVideo({
         onErrorRef.current("视频加载失败")
       }
       player.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+        applyStartAt()
         if (activeRef.current && !pausedRef.current) requestPlay("manifest")
       })
       player.on(HlsCtor.Events.FRAG_BUFFERED, () => {
@@ -236,12 +313,17 @@ export function HlsVideo({
         disablePictureInPicture
         onContextMenu={(event) => event.preventDefault()}
         onPlaying={markPlaying}
+        onLoadedMetadata={() => {
+          applyStartAt()
+        }}
         onLoadedData={() => {
+          applyStartAt()
           if (activeRef.current && !pausedRef.current && videoRef.current && videoRef.current.readyState >= 2) {
             requestPlay("loadeddata")
           }
         }}
         onCanPlay={() => {
+          applyStartAt()
           if (activeRef.current && !pausedRef.current) requestPlay("canplay")
         }}
         onWaiting={() => {

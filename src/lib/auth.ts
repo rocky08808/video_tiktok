@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { ObjectId } from "mongodb"
 import { cookies } from "next/headers"
 import {
+  getMoviesCollection,
   getPicsCollection,
   getSessionsCollection,
   getUsersCollection,
@@ -209,11 +210,13 @@ export async function currentUser() {
   const inviteVipCount = await countInviteVip(session.username)
   const inviteCount = await users.countDocuments({ invitedBy: session.username })
   const settings = await getAppSettings()
-  const [savedIds, likedIds, savedPicIds, likedPicIds] = await Promise.all([
+  const [savedIds, likedIds, savedPicIds, likedPicIds, savedMovieIds, likedMovieIds] = await Promise.all([
     listReactionIds(key, "video_save"),
     listReactionIds(key, "video_like"),
     listReactionIds(key, "pic_save"),
     listReactionIds(key, "pic_like"),
+    listReactionIds(key, "movie_save"),
+    listReactionIds(key, "movie_like"),
   ])
   return {
     username: session.username,
@@ -229,6 +232,8 @@ export async function currentUser() {
     likedIds,
     savedPicIds,
     likedPicIds,
+    savedMovieIds,
+    likedMovieIds,
   }
 }
 
@@ -483,11 +488,15 @@ export async function confirmVipPayment(username: string) {
 
 type CountField = "likes" | "bookmarks"
 
-const FLAG_KIND: Record<"likedIds" | "savedIds" | "likedPicIds" | "savedPicIds", ReactionKind> = {
+type FlagField = "likedIds" | "savedIds" | "likedPicIds" | "savedPicIds" | "likedMovieIds" | "savedMovieIds"
+
+const FLAG_KIND: Record<FlagField, ReactionKind> = {
   likedIds: "video_like",
   savedIds: "video_save",
   likedPicIds: "pic_like",
   savedPicIds: "pic_save",
+  likedMovieIds: "movie_like",
+  savedMovieIds: "movie_save",
 }
 
 async function videoCount(id: string, field: CountField) {
@@ -550,17 +559,39 @@ async function shiftPicCount(id: string, field: CountField, delta: 1 | -1) {
   return value
 }
 
+async function movieCount(id: string, field: CountField) {
+  const movies = await getMoviesCollection()
+  const doc = await movies.findOne({ id }, { projection: { [field]: 1 } })
+  return docCount(doc as { [key: string]: unknown } | null, field)
+}
+
+async function shiftMovieCount(id: string, field: CountField, delta: 1 | -1) {
+  const movies = await getMoviesCollection()
+  const updated = await movies.findOneAndUpdate(
+    { id },
+    { $inc: { [field]: delta } },
+    { returnDocument: "after", projection: { [field]: 1 } },
+  )
+  if (!updated) return delta > 0 ? 1 : 0
+  const value = docCount(updated as { [key: string]: unknown }, field)
+  if (value < 0) {
+    await movies.updateOne({ id }, { $set: { [field]: 0 } })
+    return 0
+  }
+  return value
+}
+
 async function syncUserFlags(
   username: string,
-  field: "likedIds" | "savedIds" | "likedPicIds" | "savedPicIds",
+  field: FlagField,
   countField: CountField,
   incoming: string[],
-  media: "video" | "pic",
+  media: "video" | "pic" | "movie",
 ) {
   await ensureAuthCollections()
   const usernameKey = username.toLocaleLowerCase()
-  const bump = media === "pic" ? shiftPicCount : shiftVideoCount
-  const readCount = media === "pic" ? picCount : videoCount
+  const bump = media === "pic" ? shiftPicCount : media === "movie" ? shiftMovieCount : shiftVideoCount
+  const readCount = media === "pic" ? picCount : media === "movie" ? movieCount : videoCount
   return syncReactionIds(
     usernameKey,
     FLAG_KIND[field],
@@ -585,6 +616,14 @@ export async function saveUserPicFavorites(username: string, savedPicIds: string
 
 export async function saveUserPicLikes(username: string, likedPicIds: string[]) {
   return syncUserFlags(username, "likedPicIds", "likes", likedPicIds, "pic")
+}
+
+export async function saveUserMovieFavorites(username: string, savedMovieIds: string[]) {
+  return syncUserFlags(username, "savedMovieIds", "bookmarks", savedMovieIds, "movie")
+}
+
+export async function saveUserMovieLikes(username: string, likedMovieIds: string[]) {
+  return syncUserFlags(username, "likedMovieIds", "likes", likedMovieIds, "movie")
 }
 
 export async function closeSession() {

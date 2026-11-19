@@ -115,10 +115,55 @@ export function IconFullscreen({ active, className = "h-6 w-6" }: IconProps & { 
   )
 }
 
+export function IconBack({ className = "h-6 w-6" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden fill="none">
+      <path
+        d="M14.8 5.5 8.3 12l6.5 6.5"
+        stroke="#fff"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export function IconPlay({ className = "h-8 w-8" }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden>
       <path d="M8 5.8v12.4L19 12 8 5.8Z" fill="#fff" />
+    </svg>
+  )
+}
+
+/** 快退 / 快进：双三角 */
+export function IconSeek({
+  direction,
+  className = "h-6 w-6",
+}: IconProps & { direction: "back" | "forward" }) {
+  const isBack = direction === "back"
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      {isBack ? (
+        <>
+          <path d="M11.8 6.2 5.2 12l6.6 5.8V6.2Z" fill="#fff" />
+          <path d="M18.6 6.2 12 12l6.6 5.8V6.2Z" fill="#fff" />
+        </>
+      ) : (
+        <>
+          <path d="M5.4 6.2v11.6L12 12 5.4 6.2Z" fill="#fff" />
+          <path d="M12.2 6.2v11.6L18.8 12 12.2 6.2Z" fill="#fff" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+export function IconPause({ className = "h-8 w-8" }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path d="M7.2 5.5h3.2v13H7.2zM13.6 5.5h3.2v13h-3.2z" fill="#fff" />
     </svg>
   )
 }
