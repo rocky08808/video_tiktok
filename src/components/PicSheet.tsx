@@ -265,7 +265,7 @@ export function PicSheet({
       const data = (await response.json()) as { pics?: PackedPic[]; error?: string }
       if (!response.ok) {
         setSavedList([])
-        setSavedListError(data.error || "加载失败")
+        setSavedListError(data.error || t("movie.loadFailed"))
         return
       }
       const next = (Array.isArray(data.pics) ? data.pics : []).map(normalizePic)
@@ -273,7 +273,7 @@ export function PicSheet({
       if (data.error && next.length === 0) setSavedListError(data.error)
     } catch {
       setSavedList([])
-      setSavedListError("网络不好，稍后再试")
+      setSavedListError(t("pics.network"))
     } finally {
       setSavedListLoading(false)
     }
@@ -420,7 +420,7 @@ export function PicSheet({
         return
       }
       if (next.length === 0) {
-        setError(force ? "暂时没有更多美图" : "暂时没有美图")
+        setError(force ? t("pics.noMore") : t("pics.empty"))
         if (!force) setPics([])
         hasMoreRef.current = false
         setHasMore(false)
@@ -434,7 +434,7 @@ export function PicSheet({
       applyPics(next, 0, nextLimited)
     } catch {
       if (id !== requestId.current) return
-      setError("网络不好，稍后再试")
+      setError(t("pics.network"))
     } finally {
       if (id === requestId.current) setLoading(false)
     }

@@ -79,5 +79,10 @@ export function describeMongoError(error: unknown) {
   if (/ECONNREFUSED|ENOTFOUND|timed out|Server selection|ETIMEDOUT|ECONNRESET/i.test(message)) {
     return "连不上宝塔上的 MongoDB。本机调试要用服务器公网 IP，并放行 27017；Mongo 的 bindIp 不能只写 127.0.0.1。网站如果部署在这台宝塔上，地址改用 127.0.0.1"
   }
-  return "连不上宝塔 MongoDB"
+  // 业务/权限等非连接错误：直接透出，避免一律显示「连不上」
+  if (message && !/^Mongo|Topology|pool|socket/i.test(message)) {
+    return message
+  }
+  if (message) return `数据库操作失败：${message}`
+  return "数据库操作失败"
 }

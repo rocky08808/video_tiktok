@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 import { AdminShell } from "@/components/AdminShell"
+import { useLocale, useT } from "@/components/LocaleProvider"
 
 type UserRow = {
   username: string
@@ -27,15 +28,10 @@ type UsersResponse = {
   error?: string
 }
 
-function formatTime(value: string | null) {
-  if (!value) return "—"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleString("zh-CN", { hour12: false })
-}
-
 export default function AdminUsersPage() {
   const router = useRouter()
+  const t = useT()
+  const { locale } = useLocale()
   const [adminName, setAdminName] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [query, setQuery] = useState("")
@@ -52,6 +48,13 @@ export default function AdminUsersPage() {
   const [pwd, setPwd] = useState("")
   const [pwd2, setPwd2] = useState("")
   const [pwdError, setPwdError] = useState<string | null>(null)
+
+  function formatTime(value: string | null) {
+    if (!value) return "—"
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return "—"
+    return date.toLocaleString(locale === "zh" ? "zh-CN" : "en-US", { hour12: false })
+  }
 
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -70,7 +73,7 @@ export default function AdminUsersPage() {
         return
       }
       if (!response.ok) {
-        setError(data.error || "加载失败")
+        setError(data.error || t("admin.loadFailed"))
         setItems([])
         return
       }
@@ -78,11 +81,11 @@ export default function AdminUsersPage() {
       setTotal(data.total ?? 0)
       setPages(data.pages ?? 1)
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("admin.network"))
     } finally {
       setLoading(false)
     }
-  }, [page, query, router, vip])
+  }, [page, query, router, t, vip])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -125,11 +128,11 @@ export default function AdminUsersPage() {
   async function submitPassword() {
     if (!pwdUser || busy) return
     if (pwd.length < 6) {
-      setPwdError("密码至少 6 位")
+      setPwdError(t("admin.pwdTooShort"))
       return
     }
     if (pwd !== pwd2) {
-      setPwdError("两次密码不一致")
+      setPwdError(t("admin.pwdMismatch"))
       return
     }
     setBusy(`pwd:${pwdUser}`)
@@ -148,15 +151,15 @@ export default function AdminUsersPage() {
         return
       }
       if (!response.ok) {
-        setPwdError(data.error || "修改失败")
+        setPwdError(data.error || t("admin.pwdFailed"))
         return
       }
-      setInfo(`已更新 ${pwdUser} 的密码`)
+      setInfo(t("admin.pwdUpdated", { name: pwdUser }))
       setPwdUser(null)
       setPwd("")
       setPwd2("")
     } catch {
-      setPwdError("网络不好，稍后再试")
+      setPwdError(t("admin.network"))
     } finally {
       setBusy(null)
     }
@@ -165,7 +168,9 @@ export default function AdminUsersPage() {
   async function toggleVip(user: UserRow) {
     if (busy) return
     const next = !user.vip
-    const tip = next ? `确认给 ${user.username} 开通 VIP？` : `确认取消 ${user.username} 的 VIP？`
+    const tip = next
+      ? t("admin.confirmGrantVip", { name: user.username })
+      : t("admin.confirmRevokeVip", { name: user.username })
     if (!window.confirm(tip)) return
     setBusy(user.username)
     setError(null)
@@ -182,19 +187,19 @@ export default function AdminUsersPage() {
         return
       }
       if (!response.ok) {
-        setError(data.error || "操作失败")
+        setError(data.error || t("admin.actionFailed"))
         return
       }
       await loadUsers()
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("admin.network"))
     } finally {
       setBusy(null)
     }
   }
 
   return (
-    <AdminShell title="用户管理" description="查看账号、邀请关系，并开通或取消 VIP" adminName={adminName}>
+    <AdminShell title={t("admin.usersTitle")} description={t("admin.usersDesc")} adminName={adminName}>
       <div className="admin-toolbar">
         <input
           value={q}
@@ -205,7 +210,7 @@ export default function AdminUsersPage() {
               setQuery(q.trim())
             }
           }}
-          placeholder="搜索用户名 / 邀请码"
+          placeholder={t("admin.usersSearch")}
           className="admin-field min-w-[220px] flex-1"
         />
         <select
@@ -216,9 +221,9 @@ export default function AdminUsersPage() {
           }}
           className="admin-field"
         >
-          <option value="all">全部用户</option>
-          <option value="yes">仅 VIP</option>
-          <option value="no">非 VIP</option>
+          <option value="all">{t("admin.usersAll")}</option>
+          <option value="yes">{t("admin.usersVipOnly")}</option>
+          <option value="no">{t("admin.usersNonVip")}</option>
         </select>
         <button
           type="button"
@@ -228,11 +233,11 @@ export default function AdminUsersPage() {
             setQuery(q.trim())
           }}
         >
-          搜索
+          {t("admin.search")}
         </button>
       </div>
 
-      <p className="admin-meta">共 {total} 人</p>
+      <p className="admin-meta">{t("admin.usersTotal", { n: total })}</p>
       {error && <p className="admin-alert-error">{error}</p>}
       {info && <p className="admin-alert-ok">{info}</p>}
 
@@ -240,26 +245,26 @@ export default function AdminUsersPage() {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>用户</th>
-              <th>VIP</th>
-              <th>来源</th>
-              <th>邀请</th>
-              <th>收藏 / 赞</th>
-              <th>注册时间</th>
-              <th>操作</th>
+              <th>{t("admin.colUser")}</th>
+              <th>{t("admin.colVip")}</th>
+              <th>{t("admin.colSource")}</th>
+              <th>{t("admin.colInvite")}</th>
+              <th>{t("admin.colSavedLiked")}</th>
+              <th>{t("admin.colCreated")}</th>
+              <th>{t("admin.colActions")}</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
                 <td colSpan={7} className="!py-12 text-center text-white/40">
-                  加载中…
+                  {t("admin.loading")}
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
                 <td colSpan={7} className="!py-12 text-center text-white/40">
-                  没有用户
+                  {t("admin.usersEmpty")}
                 </td>
               </tr>
             ) : (
@@ -268,8 +273,8 @@ export default function AdminUsersPage() {
                   <td>
                     <p className="font-medium text-white">{user.username}</p>
                     <p className="mt-0.5 text-[12px] text-white/35">
-                      码 {user.inviteCode || "—"}
-                      {user.invitedBy ? ` · 由 ${user.invitedBy}` : ""}
+                      {t("admin.codeBy", { code: user.inviteCode || "—" })}
+                      {user.invitedBy ? t("admin.invitedBy", { name: user.invitedBy }) : ""}
                     </p>
                   </td>
                   <td>
@@ -278,10 +283,12 @@ export default function AdminUsersPage() {
                         VIP
                       </span>
                     ) : (
-                      <span className="text-white/35">普通</span>
+                      <span className="text-white/35">{t("admin.freeUser")}</span>
                     )}
                     {user.vipUntil ? (
-                      <p className="mt-1 text-[11px] text-white/30">至 {formatTime(user.vipUntil)}</p>
+                      <p className="mt-1 text-[11px] text-white/30">
+                        {t("admin.until", { time: formatTime(user.vipUntil) })}
+                      </p>
                     ) : user.vipAt ? (
                       <p className="mt-1 text-[11px] text-white/30">{formatTime(user.vipAt)}</p>
                     ) : null}
@@ -302,7 +309,7 @@ export default function AdminUsersPage() {
                         className="admin-btn admin-btn-ghost !h-8 !px-3 !text-[12px]"
                         onClick={() => openPassword(user)}
                       >
-                        修改密码
+                        {t("admin.changePassword")}
                       </button>
                       <button
                         type="button"
@@ -314,7 +321,11 @@ export default function AdminUsersPage() {
                         }`}
                         onClick={() => void toggleVip(user)}
                       >
-                        {busy === user.username ? "处理中…" : user.vip ? "取消 VIP" : "开通 VIP"}
+                        {busy === user.username
+                          ? t("admin.processing")
+                          : user.vip
+                            ? t("admin.revokeVip")
+                            : t("admin.grantVip")}
                       </button>
                     </div>
                   </td>
@@ -328,14 +339,14 @@ export default function AdminUsersPage() {
       {pwdUser && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="admin-card w-full max-w-sm shadow-[0_24px_60px_rgba(0,0,0,0.45)]">
-            <p className="text-[15px] font-semibold text-white">修改密码</p>
-            <p className="mt-1 text-[12px] text-white/40">用户 {pwdUser}</p>
+            <p className="text-[15px] font-semibold text-white">{t("admin.pwdTitle")}</p>
+            <p className="mt-1 text-[12px] text-white/40">{t("admin.pwdUser", { name: pwdUser })}</p>
             <div className="mt-4 space-y-3">
               <input
                 type="password"
                 value={pwd}
                 onChange={(event) => setPwd(event.target.value)}
-                placeholder="新密码（至少 6 位）"
+                placeholder={t("admin.pwdNew")}
                 className="admin-field h-11 w-full"
                 autoComplete="new-password"
               />
@@ -343,7 +354,7 @@ export default function AdminUsersPage() {
                 type="password"
                 value={pwd2}
                 onChange={(event) => setPwd2(event.target.value)}
-                placeholder="再输入一次"
+                placeholder={t("admin.pwdAgain")}
                 className="admin-field h-11 w-full"
                 autoComplete="new-password"
               />
@@ -356,7 +367,7 @@ export default function AdminUsersPage() {
                 disabled={busy === `pwd:${pwdUser}`}
                 onClick={closePassword}
               >
-                取消
+                {t("admin.cancel")}
               </button>
               <button
                 type="button"
@@ -364,7 +375,7 @@ export default function AdminUsersPage() {
                 disabled={busy === `pwd:${pwdUser}`}
                 onClick={() => void submitPassword()}
               >
-                {busy === `pwd:${pwdUser}` ? "保存中…" : "保存"}
+                {busy === `pwd:${pwdUser}` ? t("admin.saving") : t("admin.save")}
               </button>
             </div>
           </div>
@@ -378,7 +389,7 @@ export default function AdminUsersPage() {
           disabled={page <= 1 || loading}
           onClick={() => setPage((current) => Math.max(1, current - 1))}
         >
-          上一页
+          {t("admin.prevPage")}
         </button>
         <span>
           {page} / {pages}
@@ -389,7 +400,7 @@ export default function AdminUsersPage() {
           disabled={page >= pages || loading}
           onClick={() => setPage((current) => current + 1)}
         >
-          下一页
+          {t("admin.nextPage")}
         </button>
       </div>
     </AdminShell>

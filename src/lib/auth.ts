@@ -333,28 +333,40 @@ function amountSlot(amount: number, base: number) {
   return Math.round((Number(amount) - base) / VIP_AMOUNT_STEP)
 }
 
-async function nextVipAmount() {
+function isDuplicateKey(error: unknown) {
+  if (!error || typeof error !== "object") return false
+  const code = (error as { code?: number }).code
+  if (code === 11000) return true
+  const message = error instanceof Error ? error.message : String((error as { message?: unknown }).message || "")
+  return /E11000|duplicate key/i.test(message)
+}
+
+/** 过期 pending 仍占着 amount 唯一索引；先标成 expired 再分配 */
+async function expireStaleVipOrders() {
+  const orders = await getVipOrdersCollection()
+  const cutoff = new Date(Date.now() - VIP_ORDER_TTL_MS)
+  await orders.updateMany(
+    { status: "pending", createdAt: { $lte: cutoff } },
+    { $set: { status: "expired", expiredAt: new Date() } },
+  )
+}
+
+async function nextVipAmount(extraUsed: Set<number> = new Set()) {
   const { vipPriceUsdt: base } = await getAppSettings()
   const orders = await getVipOrdersCollection()
-  const since = new Date(Date.now() - VIP_ORDER_TTL_MS)
-  const pending = await orders
-    .find({ status: "pending", createdAt: { $gt: since } }, { projection: { amount: 1 } })
-    .toArray()
-  const used = new Set(
-    pending
-      .map((item) => amountSlot(Number(item.amount), base))
-      .filter((n) => Number.isFinite(n) && n >= 0 && n < VIP_AMOUNT_SLOTS),
-  )
+  // 必须与 pending_amount_unique 范围一致：所有 status=pending，不能只看 24h 内
+  const pending = await orders.find({ status: "pending" }, { projection: { amount: 1 } }).toArray()
+  const used = new Set(extraUsed)
+  for (const item of pending) {
+    const slot = amountSlot(Number(item.amount), base)
+    if (Number.isFinite(slot) && slot >= 0 && slot < VIP_AMOUNT_SLOTS) used.add(slot)
+  }
   for (let slot = 0; slot < VIP_AMOUNT_SLOTS; slot += 1) {
     if (!used.has(slot)) {
       return Math.round((base + slot * VIP_AMOUNT_STEP) * 1000) / 1000
     }
   }
   throw new Error("当前充值的人有点多，请稍后再试")
-}
-
-function isDuplicateKey(error: unknown) {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: number }).code === 11000
 }
 
 export async function ensurePendingVipOrder(username: string) {
@@ -368,6 +380,8 @@ export async function ensurePendingVipOrder(username: string) {
     { amount: 1 },
     { unique: true, partialFilterExpression: { status: "pending" }, name: "pending_amount_unique" },
   )
+
+  await expireStaleVipOrders()
 
   const existing = await orders.findOne({
     username,
@@ -384,8 +398,10 @@ export async function ensurePendingVipOrder(username: string) {
     }
   }
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const amount = await nextVipAmount()
+  const { vipPriceUsdt: base } = await getAppSettings()
+  const blocked = new Set<number>()
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const amount = await nextVipAmount(blocked)
     try {
       const result = await orders.insertOne({
         username,
@@ -404,17 +420,30 @@ export async function ensurePendingVipOrder(username: string) {
         currency: "USDT" as const,
       }
     } catch (error) {
-      if (isDuplicateKey(error) && attempt < 7) continue
-      throw error
+      if (!isDuplicateKey(error) || attempt >= 11) {
+        if (isDuplicateKey(error)) throw new Error("当前充值的人有点多，请稍后再试")
+        throw error
+      }
+      const slot = amountSlot(amount, base)
+      if (Number.isFinite(slot)) blocked.add(slot)
+      // 可能撞上刚过期尚未清理的单，再清一次
+      if (attempt % 3 === 2) await expireStaleVipOrders()
     }
   }
   throw new Error("当前充值的人有点多，请稍后再试")
 }
 
+export type VipConfirmFailCode =
+  | "no_address"
+  | "no_order"
+  | "chain_failed"
+  | "payment_not_found"
+  | "order_expired"
+
 export async function confirmVipPayment(username: string) {
   await ensureAuthCollections()
   const address = vipUsdtAddress()
-  if (!address) return { ok: false as const, error: "还没配置收款地址" }
+  if (!address) return { ok: false as const, code: "no_address" as const }
 
   const orders = await getVipOrdersCollection()
   const order = await orders.findOne({
@@ -423,7 +452,7 @@ export async function confirmVipPayment(username: string) {
     createdAt: { $gt: new Date(Date.now() - VIP_ORDER_TTL_MS) },
   })
   if (!order || typeof order.amount !== "number") {
-    return { ok: false as const, error: "请先打开充值页生成订单" }
+    return { ok: false as const, code: "no_order" as const }
   }
 
   const createdAt = order.createdAt instanceof Date ? order.createdAt.getTime() : Date.now()
@@ -433,7 +462,7 @@ export async function confirmVipPayment(username: string) {
     transfers = await listUsdtTransfersToVip(50)
   } catch (error) {
     const message = error instanceof Error ? error.message : ""
-    return { ok: false as const, error: message || "查链失败，稍后再试" }
+    return { ok: false as const, code: "chain_failed" as const, detail: message || undefined }
   }
 
   const candidates = transfers.filter(
@@ -457,7 +486,7 @@ export async function confirmVipPayment(username: string) {
   if (!matched) {
     return {
       ok: false as const,
-      error: `还没检测到 ${order.amount} USDT 到账，链上通常要几秒到一分钟，请稍后再点`,
+      code: "payment_not_found" as const,
       amount: order.amount,
     }
   }
@@ -480,7 +509,7 @@ export async function confirmVipPayment(username: string) {
       await openVip(username)
       return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId }
     }
-    return { ok: false as const, error: "订单已失效，请刷新页面" }
+    return { ok: false as const, code: "order_expired" as const }
   }
 
   await openVip(username)

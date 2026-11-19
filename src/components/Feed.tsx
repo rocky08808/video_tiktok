@@ -21,6 +21,7 @@ import { noteAuthResponse, SESSION_KICKED_EVENT } from "@/lib/session-client"
 import {
   canWatchMovie,
   canWatchVideo,
+  ensureFreeMoviePackIds,
   ensureFreePackIds,
   noteWatchedId,
   noteWatchedMovieId,
@@ -401,7 +402,7 @@ export function Feed() {
           writeFreePicPack(
             list.flatMap((item) =>
               typeof item.id === "string" && typeof item.src === "string"
-                ? [{ id: item.id, name: typeof item.name === "string" ? item.name : "美图", src: item.src }]
+                ? [{ id: item.id, name: typeof item.name === "string" ? item.name : t("pics.title"), src: item.src }]
                 : [],
             ),
             0,
@@ -625,6 +626,7 @@ export function Feed() {
         moviesBootedRef.current = true
         setMoviesHasMore(movieHasMoreRef.current)
         setMovies(page)
+        if (!vipUserRef.current) ensureFreeMoviePackIds(page.map((movie) => movie.id))
         setMoviesError(page.length === 0 ? data.error ?? t("feed.noMovies") : null)
       } catch {
         if (!alive) return
@@ -661,7 +663,9 @@ export function Feed() {
         setMovies((current) => {
           const have = new Set(current.map((item) => item.id))
           const extra = page.filter((item) => !have.has(item.id))
-          return extra.length > 0 ? [...current, ...extra] : current
+          const next = extra.length > 0 ? [...current, ...extra] : current
+          if (!vipUserRef.current) ensureFreeMoviePackIds(next.map((movie) => movie.id))
+          return next
         })
         movieHasMoreRef.current = data.hasMore !== false && page.length >= MOVIE_PAGE_SIZE
         setMoviesHasMore(movieHasMoreRef.current)
@@ -1509,7 +1513,11 @@ function activeVideo() {
 
   function openMovie(movie: MovieItem) {
     const vip = user?.vip === true
+    if (!vip) {
+      ensureFreeMoviePackIds([movie.id, ...movies.map((item) => item.id)])
+    }
     if (!canWatchMovie(movie.id, vip)) {
+      setPlayingMovie(null)
       setMovieQuotaHit(true)
       setVipOpen(true)
       return
@@ -1760,6 +1768,7 @@ function activeVideo() {
               loadingMore={moviesLoadingMore}
               error={moviesError}
               hasMore={moviesHasMore}
+              vip={user?.vip === true}
               onOpen={openMovie}
               onLoadMore={loadMoreMovies}
               likedIds={likedMovieIds}

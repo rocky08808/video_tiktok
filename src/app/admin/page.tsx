@@ -3,9 +3,13 @@
 import { useRouter } from "next/navigation"
 import { useEffect, useState, type FormEvent } from "react"
 import { BrandLogo } from "@/components/BrandLogo"
+import { IconLang } from "@/components/icons"
+import { useLocale, useT } from "@/components/LocaleProvider"
 
 export default function AdminLoginPage() {
   const router = useRouter()
+  const t = useT()
+  const { locale, setLocale } = useLocale()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -21,16 +25,16 @@ export default function AdminLoginPage() {
           router.replace("/admin/users")
           return
         }
-        if (data.configured === false) setError(data.error || "还没配置管理账号")
+        if (data.configured === false) setError(data.error || t("admin.notConfigured"))
         setChecking(false)
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return
-        setError("网络不好，稍后再试")
+        setError(t("admin.network"))
         setChecking(false)
       })
     return () => controller.abort()
-  }, [router])
+  }, [router, t])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -45,12 +49,12 @@ export default function AdminLoginPage() {
       })
       const data = (await response.json()) as { username?: string; error?: string }
       if (!response.ok || !data.username) {
-        setError(data.error || "登录失败")
+        setError(data.error || t("admin.loginFailed"))
         return
       }
       router.replace("/admin/users")
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("admin.network"))
     } finally {
       setPending(false)
     }
@@ -58,12 +62,20 @@ export default function AdminLoginPage() {
 
   return (
     <div className="admin-login">
-      <div className="admin-login-card">
+      <div className="admin-login-card relative">
+        <button
+          type="button"
+          className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-white/45 transition hover:bg-white/5 hover:text-white/80"
+          aria-label={locale === "zh" ? t("account.langEn") : t("account.langZh")}
+          onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
+        >
+          <IconLang className="h-5 w-5" />
+        </button>
         <div className="flex flex-col items-center text-center">
           <BrandLogo className="h-14 w-14" />
           <p className="mt-4 text-[11px] font-medium tracking-[0.32em] text-white/40">SHUNKAN</p>
-          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-white">管理后台</h1>
-          <p className="mt-2 text-sm text-white/40">登录后管理用户、订单与系统配置</p>
+          <h1 className="mt-2 text-[28px] font-semibold tracking-tight text-white">{t("admin.loginTitle")}</h1>
+          <p className="mt-2 text-sm text-white/40">{t("admin.loginHint")}</p>
         </div>
 
         {checking ? (
@@ -76,7 +88,7 @@ export default function AdminLoginPage() {
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
-              placeholder="管理账号"
+              placeholder={t("admin.username")}
               className="admin-field h-12 w-full"
             />
             <input
@@ -84,12 +96,12 @@ export default function AdminLoginPage() {
               onChange={(event) => setPassword(event.target.value)}
               type="password"
               autoComplete="current-password"
-              placeholder="密码"
+              placeholder={t("admin.password")}
               className="admin-field h-12 w-full"
             />
             {error && <p className="admin-alert-error !mt-1">{error}</p>}
             <button type="submit" disabled={pending} className="admin-btn admin-btn-primary mt-1 h-12 w-full">
-              {pending ? "登录中…" : "进入控制台"}
+              {pending ? t("admin.loggingIn") : t("admin.loginSubmit")}
             </button>
           </form>
         )}

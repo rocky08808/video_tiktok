@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type FormEvent } from "react"
-import { useT } from "@/components/LocaleProvider"
+import { useLocale, useT } from "@/components/LocaleProvider"
 import { fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatVipUntilLabel, VIP_DURATION_DAYS, VIP_INVITE_NEED } from "@/lib/vip"
 
@@ -49,6 +49,7 @@ export function AccountSheet({
   onOpenVip: () => void
 }) {
   const t = useT()
+  const { locale, setLocale } = useLocale()
   const [mode, setMode] = useState<"login" | "register">("login")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -307,6 +308,29 @@ export function AccountSheet({
               {user.vip ? t("account.renewVip", { days: VIP_DURATION_DAYS }) : t("account.openVip")}
             </button>
             {error && <p className="mt-3 text-center text-sm text-[var(--dy)]">{error}</p>}
+            <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3.5 py-2.5">
+              <span className="text-[13px] text-white/45">{t("account.language")}</span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
+                    locale === "zh" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/70"
+                  }`}
+                  onClick={() => setLocale("zh")}
+                >
+                  {t("account.langZh")}
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
+                    locale === "en" ? "bg-white/15 text-white" : "text-white/40 hover:text-white/70"
+                  }`}
+                  onClick={() => setLocale("en")}
+                >
+                  {t("account.langEn")}
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               className="mt-3 h-11 w-full text-sm text-white/40 transition-colors hover:text-white/70 disabled:opacity-60"
@@ -356,6 +380,24 @@ export function AccountSheet({
             >
               {mode === "login" ? t("account.noAccount") : t("account.hasAccount")}
             </button>
+            <div className="flex items-center justify-center gap-2 pb-1 text-[12px] text-white/35">
+              <span>{t("account.language")}</span>
+              <button
+                type="button"
+                className={locale === "zh" ? "text-white/80" : "hover:text-white/60"}
+                onClick={() => setLocale("zh")}
+              >
+                {t("account.langZh")}
+              </button>
+              <span aria-hidden>·</span>
+              <button
+                type="button"
+                className={locale === "en" ? "text-white/80" : "hover:text-white/60"}
+                onClick={() => setLocale("en")}
+              >
+                {t("account.langEn")}
+              </button>
+            </div>
           </form>
         )}
       </section>

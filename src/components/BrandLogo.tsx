@@ -1,17 +1,23 @@
+"use client"
+
+import { useT } from "@/components/LocaleProvider"
+
 type Props = {
   className?: string
   title?: string
 }
 
 /** 瞬看品牌标：播放键 + 一瞬闪光 */
-export function BrandLogo({ className = "h-10 w-10", title = "瞬看" }: Props) {
+export function BrandLogo({ className = "h-10 w-10", title }: Props) {
+  const t = useT()
+  const label = title ?? t("brand")
   return (
     <svg
       className={className}
       viewBox="0 0 128 128"
       xmlns="http://www.w3.org/2000/svg"
       role="img"
-      aria-label={title}
+      aria-label={label}
     >
       <defs>
         <linearGradient id="skLogoBg" x1="18" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">

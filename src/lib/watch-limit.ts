@@ -17,12 +17,18 @@ function movieWatchKey() {
   return `sk_movie_watch_${dayKey()}`
 }
 
-function freeDailyLimit() {
-  return readClientSettings().freeDailyVideos
+function movieFreePackKey() {
+  return `sk_movie_free_${dayKey()}`
+}
+
+function freeVideoDailyLimit() {
+  const n = readClientSettings().freeDailyVideos
+  return typeof n === "number" && n > 0 ? n : 1
 }
 
 function freeMovieDailyLimit() {
-  return readClientSettings().freeDailyMovies
+  const n = readClientSettings().freeDailyMovies
+  return typeof n === "number" && n > 0 ? n : 3
 }
 
 /** 清掉非今日的免费包 / 观看记录，第二天自动换新 */
@@ -31,6 +37,7 @@ function purgeOldDayCaches() {
     const keepWatch = watchKey()
     const keepFree = freePackKey()
     const keepMovie = movieWatchKey()
+    const keepMovieFree = movieFreePackKey()
     const remove: string[] = []
     for (let index = 0; index < localStorage.length; index += 1) {
       const key = localStorage.key(index)
@@ -38,6 +45,7 @@ function purgeOldDayCaches() {
       if (key.startsWith("sk_watch_") && key !== keepWatch) remove.push(key)
       if (key.startsWith("sk_free_") && key !== keepFree) remove.push(key)
       if (key.startsWith("sk_movie_watch_") && key !== keepMovie) remove.push(key)
+      if (key.startsWith("sk_movie_free_") && key !== keepMovieFree) remove.push(key)
     }
     for (const key of remove) localStorage.removeItem(key)
   } catch {
@@ -55,7 +63,11 @@ function readIdList(key: string) {
 }
 
 function writeIdList(key: string, ids: string[]) {
-  localStorage.setItem(key, JSON.stringify(ids))
+  try {
+    localStorage.setItem(key, JSON.stringify(ids))
+  } catch {
+    // ignore quota / private mode
+  }
 }
 
 export function readWatchedIds() {
@@ -65,7 +77,7 @@ export function readWatchedIds() {
 
 export function noteWatchedId(id: string) {
   purgeOldDayCaches()
-  const limit = freeDailyLimit()
+  const limit = freeVideoDailyLimit()
   const current = readIdList(watchKey())
   if (current.includes(id)) return current
   const next = [...current, id].slice(0, limit)
@@ -75,13 +87,13 @@ export function noteWatchedId(id: string) {
 
 export function readFreePackIds() {
   purgeOldDayCaches()
-  return readIdList(freePackKey()).slice(0, freeDailyLimit())
+  return readIdList(freePackKey()).slice(0, freeVideoDailyLimit())
 }
 
 /** 非 VIP 当日固定额度：已有今日缓存则沿用，否则重新抽一批写入 */
 export function ensureFreePackIds(candidateIds: string[]) {
   purgeOldDayCaches()
-  const limit = freeDailyLimit()
+  const limit = freeVideoDailyLimit()
   const key = freePackKey()
   const cached = readIdList(key).slice(0, limit)
   const available = new Set(candidateIds)
@@ -113,7 +125,7 @@ export function canWatchVideo(id: string, vip: boolean) {
   if (pack.length > 0) return pack.includes(id)
   const watched = readWatchedIds()
   if (watched.includes(id)) return true
-  return watched.length < freeDailyLimit()
+  return watched.length < freeVideoDailyLimit()
 }
 
 export function watchedCountToday() {
@@ -121,7 +133,29 @@ export function watchedCountToday() {
 }
 
 export function freePackFull() {
-  return readFreePackIds().length >= freeDailyLimit()
+  return readFreePackIds().length >= freeVideoDailyLimit()
+}
+
+export function readFreeMoviePackIds() {
+  purgeOldDayCaches()
+  return readIdList(movieFreePackKey()).slice(0, freeMovieDailyLimit())
+}
+
+/** 非 VIP 当日固定电影包：已有今日缓存则沿用，否则从候选里补满 */
+export function ensureFreeMoviePackIds(candidateIds: string[]) {
+  purgeOldDayCaches()
+  const limit = freeMovieDailyLimit()
+  const key = movieFreePackKey()
+  const cached = readIdList(key).slice(0, limit)
+  if (candidateIds.length === 0) return cached
+  // 已缓存的 id 即使暂时不在本页也保留
+  const keptAll = cached.slice(0, limit)
+  if (keptAll.length >= limit) return keptAll
+  const have = new Set(keptAll)
+  const fill = candidateIds.filter((id) => !have.has(id)).slice(0, limit - keptAll.length)
+  const next = [...keptAll, ...fill].slice(0, limit)
+  writeIdList(key, next)
+  return next
 }
 
 export function readWatchedMovieIds() {
@@ -134,13 +168,16 @@ export function noteWatchedMovieId(id: string) {
   const limit = freeMovieDailyLimit()
   const current = readIdList(movieWatchKey())
   if (current.includes(id)) return current
-  const next = [...current, id].slice(0, Math.max(limit, current.length + 1))
+  const next = [...current, id].slice(0, limit)
   writeIdList(movieWatchKey(), next)
   return next
 }
 
 export function canWatchMovie(id: string, vip: boolean) {
   if (vip) return true
+  if (!id) return false
+  const pack = readFreeMoviePackIds()
+  if (pack.length > 0) return pack.includes(id)
   const watched = readWatchedMovieIds()
   if (watched.includes(id)) return true
   return watched.length < freeMovieDailyLimit()
@@ -148,4 +185,8 @@ export function canWatchMovie(id: string, vip: boolean) {
 
 export function watchedMovieCountToday() {
   return readWatchedMovieIds().length
+}
+
+export function freeMovieLimit() {
+  return freeMovieDailyLimit()
 }

@@ -5,7 +5,7 @@ import { describeMongoError } from "@/lib/mongo"
 export async function GET() {
   await connection()
   const user = await currentUser()
-  if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
+  if (!user) return Response.json({ error: "need_login", code: "need_login" }, { status: 401 })
   try {
     const order = await ensurePendingVipOrder(user.username)
     return Response.json(
@@ -15,22 +15,33 @@ export async function GET() {
   } catch (error) {
     const message = error instanceof Error ? error.message : ""
     if (message.includes("缺少收款地址")) {
-      return Response.json({ error: "还没配置收款地址" }, { status: 503 })
+      return Response.json({ error: "no_address", code: "no_address" }, { status: 503 })
     }
-    return Response.json({ error: describeMongoError(error) }, { status: 503 })
+    if (message.includes("充值的人有点多") || /E11000|duplicate key/i.test(message)) {
+      return Response.json({ error: "busy", code: "busy" }, { status: 503 })
+    }
+    return Response.json(
+      { error: describeMongoError(error), code: "db_error", detail: describeMongoError(error) },
+      { status: 503 },
+    )
   }
 }
 
 export async function POST() {
   await connection()
   const user = await currentUser()
-  if (!user) return Response.json({ error: "请先登录" }, { status: 401 })
+  if (!user) return Response.json({ error: "need_login", code: "need_login" }, { status: 401 })
   try {
     await ensurePendingVipOrder(user.username)
     const result = await confirmVipPayment(user.username)
     if (!result.ok) {
       return Response.json(
-        { error: result.error, amount: "amount" in result ? result.amount : undefined },
+        {
+          code: result.code,
+          error: result.code,
+          amount: "amount" in result ? result.amount : undefined,
+          detail: "detail" in result ? result.detail : undefined,
+        },
         { status: 402 },
       )
     }
@@ -47,12 +58,18 @@ export async function POST() {
     )
   } catch (error) {
     if (typeof error === "object" && error && "code" in error && (error as { code?: number }).code === 11000) {
-      return Response.json({ error: "这笔转账已经被用过了" }, { status: 409 })
+      return Response.json({ error: "tx_used", code: "tx_used" }, { status: 409 })
     }
     const message = error instanceof Error ? error.message : ""
     if (message.includes("缺少收款地址")) {
-      return Response.json({ error: "还没配置收款地址" }, { status: 503 })
+      return Response.json({ error: "no_address", code: "no_address" }, { status: 503 })
     }
-    return Response.json({ error: describeMongoError(error) }, { status: 503 })
+    if (message.includes("充值的人有点多") || /E11000|duplicate key/i.test(message)) {
+      return Response.json({ error: "busy", code: "busy" }, { status: 503 })
+    }
+    return Response.json(
+      { error: describeMongoError(error), code: "db_error", detail: describeMongoError(error) },
+      { status: 503 },
+    )
   }
 }

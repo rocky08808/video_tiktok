@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useState } from "react"
 import { AdminShell } from "@/components/AdminShell"
+import { useLocale, useT } from "@/components/LocaleProvider"
 
 type OrderStatus = "pending" | "paid" | "cancelled" | "expired"
 
@@ -29,20 +30,6 @@ type OrdersResponse = {
   error?: string
 }
 
-function formatTime(value: string | null) {
-  if (!value) return "—"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleString("zh-CN", { hour12: false })
-}
-
-function statusLabel(status: OrderStatus) {
-  if (status === "paid") return "已支付"
-  if (status === "cancelled") return "已取消"
-  if (status === "expired") return "已过期"
-  return "待支付"
-}
-
 function statusClass(status: OrderStatus) {
   if (status === "paid") return "bg-[#25f4ee]/15 text-[#25f4ee]"
   if (status === "cancelled") return "bg-white/10 text-white/45"
@@ -52,6 +39,8 @@ function statusClass(status: OrderStatus) {
 
 export default function AdminOrdersPage() {
   const router = useRouter()
+  const t = useT()
+  const { locale } = useLocale()
   const [adminName, setAdminName] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [query, setQuery] = useState("")
@@ -64,6 +53,20 @@ export default function AdminOrdersPage() {
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+
+  function formatTime(value: string | null) {
+    if (!value) return "—"
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return "—"
+    return date.toLocaleString(locale === "zh" ? "zh-CN" : "en-US", { hour12: false })
+  }
+
+  function statusLabel(value: OrderStatus) {
+    if (value === "paid") return t("admin.statusPaid")
+    if (value === "cancelled") return t("admin.statusCancelled")
+    if (value === "expired") return t("admin.statusExpired")
+    return t("admin.statusPending")
+  }
 
   const loadOrders = useCallback(async () => {
     setLoading(true)
@@ -82,7 +85,7 @@ export default function AdminOrdersPage() {
         return
       }
       if (!response.ok) {
-        setError(data.error || "加载失败")
+        setError(data.error || t("admin.loadFailed"))
         setItems([])
         return
       }
@@ -90,11 +93,11 @@ export default function AdminOrdersPage() {
       setTotal(data.total ?? 0)
       setPages(data.pages ?? 1)
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("admin.network"))
     } finally {
       setLoading(false)
     }
-  }, [page, query, router, status])
+  }, [page, query, router, status, t])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -122,11 +125,17 @@ export default function AdminOrdersPage() {
   async function runAction(order: OrderRow, action: "cancel" | "markPaid" | "check") {
     if (busy) return
     if (action === "cancel") {
-      if (!window.confirm(`确认取消 ${order.username} 的待支付订单（${order.amountText} USDT）？`)) return
+      if (
+        !window.confirm(
+          t("admin.confirmCancelOrder", { name: order.username, amount: order.amountText }),
+        )
+      ) {
+        return
+      }
     } else if (action === "markPaid") {
       if (
         !window.confirm(
-          `确认将 ${order.username} 的订单标记为已支付，并开通 VIP？\n金额 ${order.amountText} USDT`,
+          t("admin.confirmMarkPaid", { name: order.username, amount: order.amountText }),
         )
       ) {
         return
@@ -152,28 +161,33 @@ export default function AdminOrdersPage() {
         return
       }
       if (!response.ok) {
-        setError(data.error || "操作失败")
+        setError(data.error || t("admin.actionFailed"))
         return
       }
       if (action === "check") {
         if (data.found) {
-          setInfo(data.message || `已到账${data.txId ? ` · ${data.txId}` : ""}`)
+          setInfo(
+            data.message ||
+              (data.txId
+                ? t("admin.paidDetectedTx", { tx: data.txId })
+                : t("admin.paidDetected")),
+          )
         } else {
-          setInfo(data.message || "未检测到到账")
+          setInfo(data.message || t("admin.notDetected"))
         }
       } else {
-        setInfo(action === "markPaid" ? "已确认到账并开通 VIP" : "订单已取消")
+        setInfo(action === "markPaid" ? t("admin.markedPaid") : t("admin.orderCancelled"))
       }
       await loadOrders()
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("admin.network"))
     } finally {
       setBusy(null)
     }
   }
 
   return (
-    <AdminShell title="订单管理" description="查询链上到账、人工确认或取消待支付订单" adminName={adminName}>
+    <AdminShell title={t("admin.ordersTitle")} description={t("admin.ordersDesc")} adminName={adminName}>
       <div className="admin-toolbar">
         <input
           value={q}
@@ -184,7 +198,7 @@ export default function AdminOrdersPage() {
               setQuery(q.trim())
             }
           }}
-          placeholder="搜索用户名 / 金额 / 交易哈希"
+          placeholder={t("admin.ordersSearch")}
           className="admin-field min-w-[220px] flex-1"
         />
         <select
@@ -195,11 +209,11 @@ export default function AdminOrdersPage() {
           }}
           className="admin-field"
         >
-          <option value="all">全部状态</option>
-          <option value="pending">待支付</option>
-          <option value="paid">已支付</option>
-          <option value="expired">已过期</option>
-          <option value="cancelled">已取消</option>
+          <option value="all">{t("admin.ordersAll")}</option>
+          <option value="pending">{t("admin.statusPending")}</option>
+          <option value="paid">{t("admin.statusPaid")}</option>
+          <option value="expired">{t("admin.statusExpired")}</option>
+          <option value="cancelled">{t("admin.statusCancelled")}</option>
         </select>
         <button
           type="button"
@@ -209,11 +223,11 @@ export default function AdminOrdersPage() {
             setQuery(q.trim())
           }}
         >
-          搜索
+          {t("admin.search")}
         </button>
       </div>
 
-      <p className="admin-meta">共 {total} 笔订单</p>
+      <p className="admin-meta">{t("admin.ordersTotal", { n: total })}</p>
       {error && <p className="admin-alert-error">{error}</p>}
       {info && <p className="admin-alert-ok">{info}</p>}
 
@@ -221,24 +235,24 @@ export default function AdminOrdersPage() {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>用户 / 金额</th>
-              <th>状态</th>
-              <th>链上信息</th>
-              <th>时间</th>
-              <th>操作</th>
+              <th>{t("admin.colUserAmount")}</th>
+              <th>{t("admin.colStatus")}</th>
+              <th>{t("admin.colChain")}</th>
+              <th>{t("admin.colTime")}</th>
+              <th>{t("admin.colActions")}</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
                 <td colSpan={5} className="!py-12 text-center text-white/40">
-                  加载中…
+                  {t("admin.loading")}
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
                 <td colSpan={5} className="!py-12 text-center text-white/40">
-                  没有订单
+                  {t("admin.ordersEmpty")}
                 </td>
               </tr>
             ) : (
@@ -265,7 +279,11 @@ export default function AdminOrdersPage() {
                   </td>
                   <td className="text-white/45">
                     <p>{formatTime(order.createdAt)}</p>
-                    {order.paidAt && <p className="mt-0.5 text-[11px] text-white/30">支付 {formatTime(order.paidAt)}</p>}
+                    {order.paidAt && (
+                      <p className="mt-0.5 text-[11px] text-white/30">
+                        {t("admin.paidAt", { time: formatTime(order.paidAt) })}
+                      </p>
+                    )}
                   </td>
                   <td>
                     {(order.status === "pending" || order.status === "expired") && (
@@ -276,7 +294,7 @@ export default function AdminOrdersPage() {
                           className="admin-btn admin-btn-mint !h-8 !px-3 !text-[12px]"
                           onClick={() => void runAction(order, "check")}
                         >
-                          {busy === order.id ? "查询中…" : "查询到账"}
+                          {busy === order.id ? t("admin.checking") : t("admin.checkPayment")}
                         </button>
                         <button
                           type="button"
@@ -284,7 +302,7 @@ export default function AdminOrdersPage() {
                           className="admin-btn !h-8 !px-3 !text-[12px] border border-white/70 bg-white/90 text-[#140c12]"
                           onClick={() => void runAction(order, "markPaid")}
                         >
-                          确认到账
+                          {t("admin.markPaid")}
                         </button>
                         <button
                           type="button"
@@ -292,7 +310,7 @@ export default function AdminOrdersPage() {
                           className="admin-btn !h-8 !px-3 !text-[12px] border border-[#ff7a96]/40 bg-[#ff7a96]/10 text-[#ff8aa3]"
                           onClick={() => void runAction(order, "cancel")}
                         >
-                          取消
+                          {t("admin.cancel")}
                         </button>
                       </div>
                     )}
@@ -314,7 +332,7 @@ export default function AdminOrdersPage() {
           disabled={page <= 1 || loading}
           onClick={() => setPage((current) => Math.max(1, current - 1))}
         >
-          上一页
+          {t("admin.prevPage")}
         </button>
         <span>
           {page} / {pages}
@@ -325,7 +343,7 @@ export default function AdminOrdersPage() {
           disabled={page >= pages || loading}
           onClick={() => setPage((current) => current + 1)}
         >
-          下一页
+          {t("admin.nextPage")}
         </button>
       </div>
     </AdminShell>

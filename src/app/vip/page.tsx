@@ -4,7 +4,8 @@ import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { storeInviteCode } from "@/components/AccountSheet"
 import { BrandLogo } from "@/components/BrandLogo"
-import { useT } from "@/components/LocaleProvider"
+import { IconLang } from "@/components/icons"
+import { useLocale, useT } from "@/components/LocaleProvider"
 import { fetchClientSettings } from "@/lib/client-settings"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
 import { noteAuthResponse } from "@/lib/session-client"
@@ -17,9 +18,57 @@ import {
   vipSupportMessage,
   vipUsdtAddress,
 } from "@/lib/vip"
+import type { TranslateFn } from "@/lib/i18n"
+
+function vipApiError(
+  t: TranslateFn,
+  data: { code?: string; error?: string; amount?: number; detail?: string },
+  fallbackKey: string,
+) {
+  const code = data.code || data.error || ""
+  const amountText =
+    typeof data.amount === "number" && Number.isFinite(data.amount)
+      ? formatVipAmount(data.amount)
+      : ""
+  switch (code) {
+    case "need_login":
+      return t("vipPage.errNeedLogin")
+    case "no_address":
+    case "还没配置收款地址":
+      return t("vipPage.errNoAddress")
+    case "no_order":
+      return t("vipPage.errNoOrder")
+    case "chain_failed":
+      return data.detail?.trim() || t("vipPage.errChainFailed")
+    case "payment_not_found":
+      return t("vipPage.errPaymentNotFound", { amount: amountText || "—" })
+    case "order_expired":
+      return t("vipPage.errOrderExpired")
+    case "busy":
+      return t("vipPage.errBusy")
+    case "tx_used":
+      return t("vipPage.errTxUsed")
+    case "db_error":
+      return data.detail?.trim() || t("vipPage.errDb")
+    default:
+      break
+  }
+  if (typeof data.error === "string" && data.error.includes("还没检测到") && amountText) {
+    return t("vipPage.errPaymentNotFound", { amount: amountText })
+  }
+  if (typeof data.error === "string" && /还没检测到\s*([\d.]+)\s*USDT/.test(data.error)) {
+    const matched = data.error.match(/还没检测到\s*([\d.]+)\s*USDT/)
+    return t("vipPage.errPaymentNotFound", { amount: matched?.[1] || amountText || "—" })
+  }
+  if (typeof data.error === "string" && data.error.trim() && !/^[a-z_]+$/i.test(data.error)) {
+    return data.error
+  }
+  return t(fallbackKey)
+}
 
 export default function VipPage() {
   const t = useT()
+  const { locale, setLocale } = useLocale()
   const fallbackAddress = vipUsdtAddress()
   const supportBase = tgSupportUrl()
   const [username, setUsername] = useState<string | null>(null)
@@ -134,14 +183,16 @@ export default function VipPage() {
           amount?: number
           address?: string
           error?: string
+          code?: string
+          detail?: string
         }
         if (noteAuthResponse(orderResponse)) {
           setUsername(null)
-          setError("账号已在别处登录")
+          setError(t("feed.kicked"))
           return
         }
         if (!orderResponse.ok) {
-          setError(order.error || "订单创建失败")
+          setError(vipApiError(t, order, "vipPage.orderFailed"))
           return
         }
         if (order.vip) {
@@ -153,12 +204,14 @@ export default function VipPage() {
       })
       .catch((reason: unknown) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return
-        setError("网络不好，稍后再试")
+        setError(t("account.network"))
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
       })
     return () => controller.abort()
+    // 仅首屏拉会话；文案用当时 locale，切语言不重拉
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function copyText(kind: "address" | "invite", value: string) {
@@ -167,14 +220,14 @@ export default function VipPage() {
       setCopied(kind)
       window.setTimeout(() => setCopied(null), 1600)
     } catch {
-      setError(kind === "address" ? "复制失败，请手动选中地址" : "复制失败，请手动复制")
+      setError(kind === "address" ? t("vipPage.copyAddressFailed") : t("account.copyFailed"))
     }
   }
 
   async function confirmPay() {
     if (pending) return
     if (!username) {
-      setError("请先登录")
+      setError(t("vipPage.needLogin"))
       return
     }
     setPending(true)
@@ -186,22 +239,24 @@ export default function VipPage() {
         vipUntil?: string | null
         amount?: number
         error?: string
+        code?: string
+        detail?: string
       }
       if (noteAuthResponse(response)) {
         setUsername(null)
-        setError("账号已在别处登录")
+        setError(t("feed.kicked"))
         return
       }
       if (typeof data.amount === "number") setAmount(data.amount)
       if (!response.ok || !data.vip) {
-        setError(data.error || "开通失败")
+        setError(vipApiError(t, data, "vipPage.activateFailed"))
         return
       }
       setVip(true)
       if (typeof data.vipUntil === "string") setVipUntil(data.vipUntil)
       setDone(true)
     } catch {
-      setError("网络不好，稍后再试")
+      setError(t("account.network"))
     } finally {
       setPending(false)
     }
@@ -226,7 +281,14 @@ export default function VipPage() {
           <h1 className="text-sm font-medium tracking-wide text-white/90">
             {vip ? t("vipPage.renew") : t("vipPage.title")}
           </h1>
-          <span className="w-10" />
+          <button
+            type="button"
+            className="grid h-10 w-10 place-items-center text-white/55 transition hover:text-white/85"
+            aria-label={locale === "zh" ? t("account.langEn") : t("account.langZh")}
+            onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
+          >
+            <IconLang className="h-5 w-5" />
+          </button>
         </header>
 
         <main
@@ -235,7 +297,7 @@ export default function VipPage() {
         >
           <div className="flex flex-col items-center gap-2.5">
             <BrandLogo className="h-12 w-12" />
-            <p className="text-[12px] font-medium tracking-[0.28em] text-white/40">瞬看</p>
+            <p className="text-[12px] font-medium tracking-[0.28em] text-white/40">{t("brand")}</p>
           </div>
           <p className="mt-3 text-center text-[42px] font-semibold leading-none tracking-tight">
             {formatVipAmount(amount)}
@@ -243,9 +305,11 @@ export default function VipPage() {
               USDT
             </span>
           </p>
-          <p className="mt-3 text-center text-[13px] text-white/50">无限观看 · 可收藏 · 无限美图</p>
+          <p className="mt-3 text-center text-[13px] text-white/50">{t("vipPage.tagline")}</p>
           {vip && vipUntilLabel && !done && (
-            <p className="mt-2 text-center text-[12px] text-[#25f4ee]/90">当前 VIP 至 {vipUntilLabel}</p>
+            <p className="mt-2 text-center text-[12px] text-[#25f4ee]/90">
+              {t("vipPage.vipUntilNow", { until: vipUntilLabel })}
+            </p>
           )}
 
           {loading ? (
@@ -255,12 +319,14 @@ export default function VipPage() {
           ) : done ? (
             <div className="mt-14 flex flex-col items-center pb-8">
               <p className="rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] px-3 py-1 text-xs font-semibold">
-                {vipUntilLabel ? `已开通至 ${vipUntilLabel}` : "已开通"}
+                {vipUntilLabel
+                  ? t("vipPage.activatedUntil", { until: vipUntilLabel })
+                  : t("vipPage.activated")}
               </p>
               <p className="mt-4 text-sm text-white/55">
                 {vipUntilLabel
-                  ? `无限观看、收藏，美图已开放 · 有效期至 ${vipUntilLabel}`
-                  : "无限观看、收藏，美图也全部开放了"}
+                  ? t("vipPage.activatedHintUntil", { until: vipUntilLabel })
+                  : t("vipPage.activatedHint")}
               </p>
               <Link
                 href="/"
@@ -273,21 +339,21 @@ export default function VipPage() {
             <div className="mt-6 space-y-3.5 pb-5">
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] px-3.5 py-3.5">
-                  <p className="text-[12px] text-white/40">普通用户</p>
+                  <p className="text-[12px] text-white/40">{t("vipSheet.freeUser")}</p>
                   <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-white/70">
-                    <li>每天 {freeDailyVideos} 条视频</li>
-                    <li>每天 {freeDailyMovies} 部电影</li>
-                    <li>不能收藏</li>
-                    <li>每天 {freeDailyPics} 张美图</li>
+                    <li>{t("vipSheet.freeVideos", { n: freeDailyVideos })}</li>
+                    <li>{t("vipSheet.freeMovies", { n: freeDailyMovies })}</li>
+                    <li>{t("vipSheet.noSave")}</li>
+                    <li>{t("vipSheet.freePics", { n: freeDailyPics })}</li>
                   </ul>
                 </div>
                 <div className="rounded-2xl border border-[#25f4ee]/20 bg-[linear-gradient(160deg,rgba(254,44,85,0.16),rgba(37,244,238,0.1))] px-3.5 py-3.5">
-                  <p className="text-[12px] font-semibold text-[#25f4ee]">VIP</p>
+                  <p className="text-[12px] font-semibold text-[#25f4ee]">{t("vipSheet.vipUser")}</p>
                   <ul className="mt-2 space-y-1.5 text-[13px] leading-relaxed text-white">
-                    <li>无限观看</li>
-                    <li>无限电影</li>
-                    <li>可收藏视频</li>
-                    <li>无限美图</li>
+                    <li>{t("vipSheet.unlimitedWatch")}</li>
+                    <li>{t("vipSheet.unlimitedMovies")}</li>
+                    <li>{t("vipSheet.canSave")}</li>
+                    <li>{t("vipSheet.unlimitedPics")}</li>
                   </ul>
                 </div>
               </div>
@@ -299,34 +365,36 @@ export default function VipPage() {
                 />
                 <div className="relative flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[15px] font-semibold">免费升级</p>
+                    <p className="text-[15px] font-semibold">{t("vipPage.freeUpgrade")}</p>
                     <p className="mt-1 text-[12px] leading-relaxed text-white/45">
                       {vip
-                        ? `每满 ${inviteNeed} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
-                        : `邀请 ${inviteNeed} 人开通 VIP 即可免费获得`}
+                        ? t("account.inviteVipStack", { need: inviteNeed, days: VIP_DURATION_DAYS })
+                        : t("vipPage.inviteUnlock", { need: inviteNeed })}
                     </p>
                   </div>
                   {vip ? (
                     <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
-                      可叠加
+                      {t("account.stackable")}
                     </span>
                   ) : inviteVipCount >= inviteNeed ? (
                     <span className="shrink-0 rounded-full bg-[#25f4ee]/15 px-2 py-1 text-[11px] font-semibold text-[#25f4ee]">
-                      已达成
+                      {t("account.achieved")}
                     </span>
                   ) : null}
                 </div>
 
                 <div className="relative mt-3.5 grid grid-cols-2 gap-2">
                   <div className="rounded-xl bg-black/25 px-3 py-3">
-                    <p className="text-[11px] text-white/40">已邀请</p>
+                    <p className="text-[11px] text-white/40">{t("account.invited")}</p>
                     <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight">
                       {inviteCount}
-                      <span className="ml-1 text-[12px] font-medium text-white/35">人</span>
+                      {t("account.people") ? (
+                        <span className="ml-1 text-[12px] font-medium text-white/35">{t("account.people")}</span>
+                      ) : null}
                     </p>
                   </div>
                   <div className="rounded-xl bg-black/25 px-3 py-3">
-                    <p className="text-[11px] text-white/40">已成 VIP</p>
+                    <p className="text-[11px] text-white/40">{t("vipPage.becameVip")}</p>
                     <p className="mt-1 text-[22px] font-semibold tabular-nums tracking-tight">
                       {inviteVipCount}
                       <span className="ml-1 text-[12px] font-medium text-white/35">/ {inviteNeed}</span>
@@ -347,19 +415,19 @@ export default function VipPage() {
                     {username
                       ? vip
                         ? batchProgress === 0 && inviteVipCount > 0
-                          ? `本轮已满，已叠加 ${VIP_DURATION_DAYS} 天`
-                          : `再邀 ${remainForBatch} 人开通 VIP，叠加 ${VIP_DURATION_DAYS} 天`
+                          ? t("vipPage.roundFullShort", { days: VIP_DURATION_DAYS })
+                          : t("account.needMore", { n: remainForBatch, days: VIP_DURATION_DAYS })
                         : inviteVipCount >= inviteNeed
-                          ? "邀请奖励已解锁"
-                          : `还差 ${Math.max(0, inviteNeed - inviteVipCount)} 人开通 VIP`
-                      : "登录后可查看邀请进度并复制链接"}
+                          ? t("account.unlocked")
+                          : t("account.needVipFriends", { n: Math.max(0, inviteNeed - inviteVipCount) })
+                      : t("vipPage.loginInviteHint")}
                   </p>
                 </div>
 
                 {username && inviteCode && (
                   <div className="relative mt-3.5 flex items-center gap-2 rounded-xl bg-black/30 p-1.5 pl-3">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] tracking-wide text-white/35">邀请码</p>
+                      <p className="text-[10px] tracking-wide text-white/35">{t("account.inviteCode")}</p>
                       <p className="truncate font-mono text-[15px] font-semibold tracking-[0.12em]">
                         {inviteCode}
                       </p>
@@ -375,7 +443,7 @@ export default function VipPage() {
                         void copyText("invite", `${window.location.origin}/?invite=${inviteCode}`)
                       }
                     >
-                      {copied === "invite" ? "已复制" : "复制链接"}
+                      {copied === "invite" ? t("account.copied") : t("vipPage.copyInvite")}
                     </button>
                   </div>
                 )}
@@ -384,8 +452,10 @@ export default function VipPage() {
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[15px] font-semibold">USDT 转账</p>
-                    <p className="mt-1 text-[12px] text-white/40">{VIP_NETWORK} · 金额必须一致</p>
+                    <p className="text-[15px] font-semibold">{t("vipPage.payTitle")}</p>
+                    <p className="mt-1 text-[12px] text-white/40">
+                      {t("vipPage.payHint", { network: VIP_NETWORK })}
+                    </p>
                   </div>
                   <div className="rounded-full bg-white/10 px-2.5 py-1 text-[12px] font-semibold tabular-nums">
                     {formatVipAmount(amount)}
@@ -397,10 +467,10 @@ export default function VipPage() {
                     <div className="mt-4 flex justify-center">
                       <div className="rounded-2xl bg-white p-2.5 shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
                         {qr ? (
-                          <img src={qr} alt="收款地址二维码" className="h-40 w-40" />
+                          <img src={qr} alt={t("vipPage.qrAlt")} className="h-40 w-40" />
                         ) : (
                           <div className="grid h-40 w-40 place-items-center text-[12px] text-black/40">
-                            生成中…
+                            {t("vipPage.qrPending")}
                           </div>
                         )}
                       </div>
@@ -419,23 +489,22 @@ export default function VipPage() {
                         }`}
                         onClick={() => void copyText("address", address)}
                       >
-                        {copied === "address" ? "已复制" : "复制"}
+                        {copied === "address" ? t("vipPage.copied") : t("vipPage.copyAddress")}
                       </button>
                     </div>
                   </>
                 ) : (
-                  <p className="mt-4 text-sm leading-6 text-[var(--dy)]">
-                    还没配置收款地址，先在环境变量里填 NEXT_PUBLIC_VIP_USDT_ADDRESS
-                  </p>
+                  <p className="mt-4 text-sm leading-6 text-[var(--dy)]">{t("vipPage.noAddress")}</p>
                 )}
               </div>
 
               <div className="rounded-2xl border border-[#fe2c55]/35 bg-[#fe2c55]/12 px-4 py-3.5">
-                <p className="text-[13px] font-semibold text-[#ff8aa3]">转账注意</p>
+                <p className="text-[13px] font-semibold text-[#ff8aa3]">{t("vipPage.cautionTitle")}</p>
                 <p className="mt-1.5 text-[13px] leading-6 text-white/85">
-                  请转账准确金额{" "}
-                  <span className="font-semibold text-[#25f4ee]">{formatVipAmount(amount)} USDT</span>（{VIP_NETWORK}
-                  ）。金额不对无法自动到账；点确认后会查链，到账才会开通。已转账仍未成功，请联系客服处理。
+                  {t("vipPage.cautionBody", {
+                    amount: formatVipAmount(amount),
+                    network: VIP_NETWORK,
+                  })}
                 </p>
               </div>
 
@@ -451,7 +520,7 @@ export default function VipPage() {
                       rel="noreferrer"
                       className="flex h-11 items-center justify-center rounded-full border border-[#2AABEE]/45 bg-[#2AABEE]/15 text-sm font-semibold text-[#7ad3ff]"
                     >
-                      已转账？联系 Telegram 客服
+                      {t("vipPage.supportPaid")}
                     </a>
                   )}
                 </div>
@@ -464,7 +533,7 @@ export default function VipPage() {
                   rel="noreferrer"
                   className="flex h-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.04] text-sm text-white/70"
                 >
-                  已转账未开通？联系客服
+                  {t("vipPage.supportUnpaid")}
                 </a>
               )}
             </div>
@@ -478,7 +547,7 @@ export default function VipPage() {
                 href="/?login=1"
                 className="grid h-12 w-full place-items-center rounded-full bg-gradient-to-r from-[#fe2c55] via-[#7c5cff] to-[#25f4ee] text-sm font-semibold shadow-[0_8px_28px_rgba(254,44,85,0.28)]"
               >
-                先去登录
+                {t("vipPage.goLogin")}
               </Link>
             ) : (
               <div className="space-y-2">
@@ -489,10 +558,10 @@ export default function VipPage() {
                   onClick={() => void confirmPay()}
                 >
                   {pending
-                    ? "正在查链…"
+                    ? t("vipPage.checkingChain")
                     : vip
-                      ? `我已转账，确认续费 +${VIP_DURATION_DAYS} 天`
-                      : "我已转账，确认开通"}
+                      ? t("vipPage.confirmRenew", { days: VIP_DURATION_DAYS })
+                      : t("vipPage.confirmOpen")}
                 </button>
                 {supportHref && (
                   <a
@@ -501,7 +570,7 @@ export default function VipPage() {
                     rel="noreferrer"
                     className="flex h-10 items-center justify-center text-[13px] text-white/45"
                   >
-                    联系 Telegram 客服
+                    {t("vipPage.tgSupport")}
                   </a>
                 )}
               </div>

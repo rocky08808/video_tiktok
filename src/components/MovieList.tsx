@@ -5,6 +5,7 @@ import { IconBookmark, IconHeart, IconPlay } from "@/components/icons"
 import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
 import type { MovieItem } from "@/lib/movies"
+import { canWatchMovie, freeMovieLimit } from "@/lib/watch-limit"
 
 const MOVIE_DOM_WINDOW = 50
 const ESTIMATE_ITEM_H = 460
@@ -16,6 +17,7 @@ export function MovieList({
   loadingMore,
   error,
   hasMore,
+  vip,
   onOpen,
   onLoadMore,
   likedIds,
@@ -29,6 +31,7 @@ export function MovieList({
   loadingMore: boolean
   error: string | null
   hasMore: boolean
+  vip?: boolean
   onOpen: (movie: MovieItem) => void
   onLoadMore: () => void
   likedIds: string[]
@@ -195,16 +198,23 @@ export function MovieList({
   }
 
   return (
-    <div
-      ref={scrollerRef}
-      className="movie-list-shell h-full overflow-y-auto overscroll-contain pb-[max(28px,env(safe-area-inset-bottom))] pt-[max(68px,calc(env(safe-area-inset-top)+56px))]"
-    >
+    <div className="movie-list-shell relative h-full">
+      {!vip ? (
+        <p className="pointer-events-none absolute inset-x-0 bottom-[max(12px,env(safe-area-inset-bottom))] z-10 mx-auto w-[min(100%-24px,650px)] rounded-2xl border border-white/10 bg-black/70 px-3.5 py-2.5 text-center text-[12px] leading-relaxed text-white/75 backdrop-blur-md">
+          {t("movie.freeBar", { n: freeMovieLimit() })}
+        </p>
+      ) : null}
+      <div
+        ref={scrollerRef}
+        className="h-full overflow-y-auto overscroll-contain pb-[max(72px,calc(env(safe-area-inset-bottom)+56px))] pt-[max(68px,calc(env(safe-area-inset-top)+56px))]"
+      >
       <div className="mx-auto w-full max-w-[650px] px-3">
         {topSpacer > 0 ? <div aria-hidden style={{ height: topSpacer }} /> : null}
 
         <div className="grid grid-cols-1" style={{ gap: ITEM_GAP }}>
           {visible.map((movie, offset) => {
             const index = range.from + offset
+            const locked = !canWatchMovie(movie.id, vip === true)
             return (
               <button
                 key={movie.id}
@@ -219,7 +229,7 @@ export function MovieList({
                       src={movie.img}
                       alt=""
                       referrerPolicy="no-referrer"
-                      className="block h-auto w-full transition duration-500 ease-out group-active:scale-[1.02]"
+                      className={`block h-auto w-full transition duration-500 ease-out group-active:scale-[1.02] ${locked ? "opacity-55" : ""}`}
                       loading="lazy"
                       onLoad={measureAllVisible}
                     />
@@ -235,6 +245,12 @@ export function MovieList({
                   <span className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/45 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-white/85 backdrop-blur-sm ring-1 ring-white/15">
                     {String(index + 1).padStart(2, "0")}
                   </span>
+
+                  {locked ? (
+                    <span className="pointer-events-none absolute right-3 top-3 rounded-full bg-[#fe2c55]/90 px-2.5 py-1 text-[11px] font-semibold text-white shadow-lg">
+                      VIP
+                    </span>
+                  ) : null}
 
                   <span className="pointer-events-none absolute inset-0 grid place-items-center opacity-0 transition duration-300 group-active:opacity-100">
                     <span className="grid h-14 w-14 place-items-center rounded-full bg-[#fe2c55]/90 pl-1 shadow-[0_8px_28px_rgba(254,44,85,0.45)] ring-1 ring-white/25">
@@ -304,6 +320,7 @@ export function MovieList({
             <span className="text-[11px] tracking-[0.18em] text-white/30">{t("movie.end")}</span>
           )}
         </div>
+      </div>
       </div>
     </div>
   )

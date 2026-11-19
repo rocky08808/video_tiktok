@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState, type MutableRefObject } from "react"
 import type Hls from "hls.js"
-import { detectLocale, translate } from "@/lib/i18n"
+import { resolveLocale, translate } from "@/lib/i18n"
 
 function t(key: string) {
-  return translate(detectLocale(), key)
+  return translate(resolveLocale(), key)
 }
 
 export type HlsSeekApi = {
