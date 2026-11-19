@@ -10,7 +10,8 @@
     "lint": "eslint",
     "db:seed": "node --env-file=.env.local scripts/seed-mongo.mjs",
     "db:import": "node --env-file=.env.local scripts/import-videos.mjs",
-    "db:import-pics": "node --env-file=.env.local scripts/import-pics.mjs"
+    "db:import-pics": "node --env-file=.env.local scripts/import-pics.mjs",
+    "db:import-movies": "node --env-file=.env.local scripts/import-movies.mjs"
   },
   "dependencies": {
     "hls.js": "^1.7.4",

@@ -51,6 +51,11 @@ export async function getPicsCollection(): Promise<Collection<Document>> {
   return database.collection(process.env.MONGODB_PICS_COLLECTION?.trim() || "pics")
 }
 
+export async function getMoviesCollection(): Promise<Collection<Document>> {
+  const database = await getDb()
+  return database.collection(process.env.MONGODB_MOVIES_COLLECTION?.trim() || "movies")
+}
+
 export async function getSettingsCollection(): Promise<Collection<Document>> {
   const database = await getDb()
   return database.collection("settings")
