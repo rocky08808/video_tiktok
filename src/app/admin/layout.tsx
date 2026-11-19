@@ -7,5 +7,5 @@ export const metadata: Metadata = {
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return <div className="admin-root overflow-y-auto overscroll-contain">{children}</div>
+  return <div className="admin-root">{children}</div>
 }
