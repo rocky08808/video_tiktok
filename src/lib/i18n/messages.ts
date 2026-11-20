@@ -220,8 +220,8 @@ const zh = {
       "请转账准确金额 {amount} USDT（{network}）。金额不对无法自动到账；点确认后会查链，到账才会开通。已转账仍未成功，请联系客服处理。",
     buyUsdtTitle: "怎么获得 USDT？",
     buyUsdtSteps:
-      "1. 在交易所购买 USDT（如币安 Binance、欧易 OKX、火币 HTX 等）\\n2. 提现到支持 TRC20 的钱包（如 Trust Wallet、TokenPocket、imToken 等）\\n3. 向本页显示的收款地址转账指定金额 USDT\\n4. 转账后点“我已转账，确认开通”，等待链上到账",
-    buyUsdtTip: "请务必使用 TRC20 网络提现，不要选错链，否则资产可能找不回。",
+      "1. 在交易所购买 USDT（如币安 Binance、欧易 OKX、火币 HTX 等）\\n2. 从交易所提币到本页显示的收款地址，务必选择 TRC20 网络\\n3. 转账后点“我已转账，确认开通”，等待链上到账",
+    buyUsdtTip: "请务必使用 TRC20 网络提币，不要选错链，否则资产可能找不回。",
     supportPaid: "已转账？联系 Telegram 客服",
     supportUnpaid: "已转账未开通？联系客服",
     tgSupport: "联系 Telegram 客服",
@@ -591,8 +591,8 @@ const en: Messages = {
       "Send exactly {amount} USDT ({network}). Wrong amounts won't auto-credit. After you confirm we check the chain; VIP unlocks when paid. If you've paid but aren't VIP yet, contact support.",
     buyUsdtTitle: "How to get USDT?",
     buyUsdtSteps:
-      "1. Buy USDT on an exchange (e.g. Binance, OKX, Huobi)\\n2. Withdraw to a TRC20 wallet (e.g. Trust Wallet, TokenPocket, imToken)\\n3. Send the exact amount to the deposit address shown on this page\\n4. After sending, tap \"I've paid — activate VIP\" and wait for on-chain confirmation",
-    buyUsdtTip: "Please use TRC20 network for withdrawal. Picking the wrong chain may lose your funds.",
+      "1. Buy USDT on an exchange (e.g. Binance, OKX, Huobi)\\n2. Withdraw from the exchange to the deposit address shown on this page, selecting TRC20 network\\n3. After sending, tap \"I've paid — activate VIP\" and wait for on-chain confirmation",
+    buyUsdtTip: "Please use TRC20 network when withdrawing from the exchange. Picking the wrong chain may lose your funds.",
     supportPaid: "Already paid? Contact Telegram support",
     supportUnpaid: "Paid but not VIP? Contact support",
     tgSupport: "Telegram support",
