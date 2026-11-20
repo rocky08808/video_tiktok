@@ -1,5 +1,5 @@
 export const VIP_PRICE_USDT = 20
-/** 在基础价上用 0.001 USDT 步进区分订单，最多 1000 个未完成单 */
+/** 在基础价上从 +0.001 起步进区分订单（不用整数基础价，避免多人误转同一整数），最多 1000 档 */
 export const VIP_AMOUNT_STEP = 0.001
 export const VIP_AMOUNT_SLOTS = 1000
 export const VIP_NETWORK = "TRC20"

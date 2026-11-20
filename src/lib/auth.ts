@@ -502,9 +502,10 @@ async function nextVipAmount(extraUsed: Set<number> = new Set()) {
   const used = new Set(extraUsed)
   for (const item of pending) {
     const slot = amountSlot(Number(item.amount), base)
-    if (Number.isFinite(slot) && slot >= 0 && slot < VIP_AMOUNT_SLOTS) used.add(slot)
+    // slot 0 = 整数基础价，不再新分配；1..SLOTS 为 +0.001 起的偏移档
+    if (Number.isFinite(slot) && slot >= 1 && slot <= VIP_AMOUNT_SLOTS) used.add(slot)
   }
-  for (let slot = 0; slot < VIP_AMOUNT_SLOTS; slot += 1) {
+  for (let slot = 1; slot <= VIP_AMOUNT_SLOTS; slot += 1) {
     if (!used.has(slot)) {
       return Math.round((base + slot * VIP_AMOUNT_STEP) * 1000) / 1000
     }
