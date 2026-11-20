@@ -377,16 +377,18 @@ function matchTransferForOrder(
   transfers: Trc20Transfer[],
   usedBy: Map<string, string>,
 ) {
-  if (typeof order.username !== "string" || !order.username) return null
-  if (typeof order.amount !== "number" || !Number.isFinite(order.amount)) return null
+  const username = order.username
+  const amount = order.amount
+  if (typeof username !== "string" || !username) return null
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return null
   const minAt = orderCreatedMs(order.createdAt) - VIP_PAYMENT_LOOKBACK_MS
   const candidates = transfers.filter(
-    (item) => item.to === address && sameUsdtAmount(item.amount, order.amount) && item.at >= minAt,
+    (item) => item.to === address && sameUsdtAmount(item.amount, amount) && item.at >= minAt,
   )
   return (
     candidates.find((item) => {
       const owner = usedBy.get(item.txId)
-      return !owner || owner === order.username
+      return !owner || owner === username
     }) ?? null
   )
 }
