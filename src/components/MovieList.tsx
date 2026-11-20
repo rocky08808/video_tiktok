@@ -206,7 +206,7 @@ export function MovieList({
       ) : null}
       <div
         ref={scrollerRef}
-        className="h-full overflow-y-auto overscroll-contain pb-[max(72px,calc(env(safe-area-inset-bottom)+56px))] pt-[max(68px,calc(env(safe-area-inset-top)+56px))]"
+        className="movie-list-scroller h-full pb-[max(72px,calc(env(safe-area-inset-bottom)+56px))] pt-[max(68px,calc(env(safe-area-inset-top)+56px))]"
       >
       <div className="mx-auto w-full max-w-[650px] px-3">
         {topSpacer > 0 ? <div aria-hidden style={{ height: topSpacer }} /> : null}

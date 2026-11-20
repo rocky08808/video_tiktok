@@ -149,12 +149,23 @@ input {
 }
 
 .movie-list-shell {
+  /* 两轴都 hidden，避免只设 overflow-x 时把外壳变成纵向滚动容器抢手势 */
+  overflow: hidden;
+  overscroll-behavior: none;
   background-color: #140c18;
   background-image:
     radial-gradient(ellipse 90% 42% at 50% 0%, rgba(254, 44, 85, 0.38), transparent 62%),
     radial-gradient(ellipse 70% 38% at 100% 100%, rgba(37, 244, 238, 0.16), transparent 58%),
     radial-gradient(ellipse 55% 36% at 0% 78%, rgba(124, 92, 255, 0.18), transparent 60%),
     linear-gradient(165deg, #2a1428 0%, #16101c 46%, #101820 100%);
+}
+
+.movie-list-scroller {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .movie-chrome {
