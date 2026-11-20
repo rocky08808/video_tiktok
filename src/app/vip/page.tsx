@@ -94,6 +94,7 @@ export default function VipPage() {
   const supportHref = supportBase
     ? tgSupportUrl(vipSupportMessage({ username, amount }))
     : ""
+  const buySteps = t("vipPage.buyUsdtSteps").split("\\n")
 
   useEffect(() => {
     if (!error) return
@@ -496,6 +497,19 @@ export default function VipPage() {
                 ) : (
                   <p className="mt-4 text-sm leading-6 text-[var(--dy)]">{t("vipPage.noAddress")}</p>
                 )}
+              </div>
+
+              <div className="rounded-2xl border border-[#25f4ee]/20 bg-[linear-gradient(160deg,rgba(37,244,238,0.08),rgba(37,244,238,0.03))] px-4 py-3.5">
+                <p className="text-[13px] font-semibold text-[#25f4ee]">{t("vipPage.buyUsdtTitle")}</p>
+                <p className="mt-1.5 text-[12px] leading-6 text-white/75">
+                  {buySteps.map((step, i) => (
+                    <span key={i}>
+                      {step}
+                      {i < buySteps.length - 1 && <br />}
+                    </span>
+                  ))}
+                </p>
+                <p className="mt-1.5 text-[11px] leading-5 text-[#25f4ee]/70">{t("vipPage.buyUsdtTip")}</p>
               </div>
 
               <div className="rounded-2xl border border-[#fe2c55]/35 bg-[#fe2c55]/12 px-4 py-3.5">
