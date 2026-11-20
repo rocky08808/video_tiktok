@@ -14,7 +14,20 @@ import {
 } from "@/components/icons"
 import { useT } from "@/components/LocaleProvider"
 import { formatCount } from "@/lib/format"
+import {
+  exitFullscreen,
+  isFullscreenFor,
+  requestFullscreen,
+  subscribeFullscreenChange,
+} from "@/lib/fullscreen"
 import type { MovieItem } from "@/lib/movies"
+
+const SPEED_STEPS = [0.75, 1, 1.25, 1.5, 2] as const
+const VOLUME_STEP = 0.1
+
+function formatSpeed(rate: number) {
+  return Number.isInteger(rate) ? String(rate) : String(rate)
+}
 
 export function MoviePlayer({
   movie,
@@ -38,10 +51,16 @@ export function MoviePlayer({
   const draggingRef = useRef(false)
   const seekHintTimerRef = useRef<number | null>(null)
   const seekHintDeltaRef = useRef(0)
+  const volumeHintTimerRef = useRef<number | null>(null)
   const chromeHideTimerRef = useRef<number | null>(null)
   const pausedRef = useRef(false)
+  const volumeRef = useRef(1)
+  const mutedRef = useRef(false)
+  const rateRef = useRef(1)
   const [paused, setPaused] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [volume, setVolume] = useState(1)
+  const [playbackRate, setPlaybackRate] = useState(1)
   const [buffering, setBuffering] = useState(true)
   const [progress, setProgress] = useState(0)
   const [scrub, setScrub] = useState<number | null>(null)
@@ -52,6 +71,9 @@ export function MoviePlayer({
   /** 顶栏 + 点赞/收藏：隐藏后仅点击视频可再显示 */
   const [metaHidden, setMetaHidden] = useState(false)
   const [seekHint, setSeekHint] = useState<{ delta: number; key: number } | null>(null)
+  const [volumeHint, setVolumeHint] = useState<{ percent: number; key: number } | null>(null)
+  const [speedHint, setSpeedHint] = useState<{ rate: number; key: number } | null>(null)
+  const speedHintTimerRef = useRef<number | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
 
   function clearChromeHideTimer() {
@@ -84,6 +106,18 @@ export function MoviePlayer({
   }, [paused])
 
   useEffect(() => {
+    volumeRef.current = volume
+  }, [volume])
+
+  useEffect(() => {
+    mutedRef.current = muted
+  }, [muted])
+
+  useEffect(() => {
+    rateRef.current = playbackRate
+  }, [playbackRate])
+
+  useEffect(() => {
     setPaused(false)
     pausedRef.current = false
     setBuffering(true)
@@ -95,10 +129,15 @@ export function MoviePlayer({
     setChromeHidden(false)
     setMetaHidden(false)
     setSeekHint(null)
+    setVolumeHint(null)
     seekHintDeltaRef.current = 0
     if (seekHintTimerRef.current != null) {
       window.clearTimeout(seekHintTimerRef.current)
       seekHintTimerRef.current = null
+    }
+    if (volumeHintTimerRef.current != null) {
+      window.clearTimeout(volumeHintTimerRef.current)
+      volumeHintTimerRef.current = null
     }
     clearChromeHideTimer()
     setEpoch((value) => value + 1)
@@ -109,6 +148,12 @@ export function MoviePlayer({
     return () => {
       if (seekHintTimerRef.current != null) {
         window.clearTimeout(seekHintTimerRef.current)
+      }
+      if (volumeHintTimerRef.current != null) {
+        window.clearTimeout(volumeHintTimerRef.current)
+      }
+      if (speedHintTimerRef.current != null) {
+        window.clearTimeout(speedHintTimerRef.current)
       }
       clearChromeHideTimer()
     }
@@ -146,6 +191,8 @@ export function MoviePlayer({
         : seconds
     seekHintDeltaRef.current = nextDelta
     setSeekHint({ delta: nextDelta, key: Date.now() })
+    setVolumeHint(null)
+    setSpeedHint(null)
     if (seekHintTimerRef.current != null) window.clearTimeout(seekHintTimerRef.current)
     seekHintTimerRef.current = window.setTimeout(() => {
       setSeekHint(null)
@@ -154,12 +201,80 @@ export function MoviePlayer({
     }, 900)
   }
 
+  function showVolumeHint(nextVolume: number) {
+    const percent = Math.round(Math.max(0, Math.min(1, nextVolume)) * 100)
+    setVolumeHint({ percent, key: Date.now() })
+    setSeekHint(null)
+    setSpeedHint(null)
+    seekHintDeltaRef.current = 0
+    if (volumeHintTimerRef.current != null) window.clearTimeout(volumeHintTimerRef.current)
+    volumeHintTimerRef.current = window.setTimeout(() => {
+      setVolumeHint(null)
+      volumeHintTimerRef.current = null
+    }, 900)
+  }
+
+  function showSpeedHint(rate: number) {
+    setSpeedHint({ rate, key: Date.now() })
+    setVolumeHint(null)
+    setSeekHint(null)
+    seekHintDeltaRef.current = 0
+    if (speedHintTimerRef.current != null) window.clearTimeout(speedHintTimerRef.current)
+    speedHintTimerRef.current = window.setTimeout(() => {
+      setSpeedHint(null)
+      speedHintTimerRef.current = null
+    }, 900)
+  }
+
+  function applySpeed(next: number) {
+    rateRef.current = next
+    setPlaybackRate(next)
+    seekApiRef.current?.setPlaybackRate(next)
+    const video = stageRef.current?.querySelector("video")
+    if (video) {
+      try {
+        video.defaultPlaybackRate = next
+        video.playbackRate = next
+      } catch {
+        // ignore
+      }
+    }
+    showSpeedHint(next)
+    setChromeHidden(false)
+    setMetaHidden(false)
+    scheduleChromeHide()
+  }
+
   function seekBySeconds(seconds: number) {
     setScrub(null)
     setMetaHidden(true)
     seekApiRef.current?.seekBy(seconds)
     showSeekHint(seconds)
     scheduleChromeHide()
+  }
+
+  function adjustVolume(delta: number) {
+    const current = mutedRef.current ? 0 : volumeRef.current
+    const next = Math.max(0, Math.min(1, Math.round((current + delta) * 100) / 100))
+    setVolume(next)
+    volumeRef.current = next
+    if (next <= 0) {
+      setMuted(true)
+      mutedRef.current = true
+    } else {
+      setMuted(false)
+      mutedRef.current = false
+    }
+    showVolumeHint(next)
+    setChromeHidden(false)
+    scheduleChromeHide()
+  }
+
+  function cycleSpeed() {
+    const current = rateRef.current
+    const index = SPEED_STEPS.findIndex((step) => Math.abs(step - current) < 0.001)
+    const next = SPEED_STEPS[(index + 1) % SPEED_STEPS.length] ?? 1
+    applySpeed(next)
   }
 
   function onProgressPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -195,24 +310,30 @@ export function MoviePlayer({
   }
 
   useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement === stageRef.current)
-    document.addEventListener("fullscreenchange", onChange)
-    return () => document.removeEventListener("fullscreenchange", onChange)
+    const onChange = () => setFullscreen(isFullscreenFor(stageRef.current))
+    onChange()
+    return subscribeFullscreenChange(stageRef.current, onChange)
   }, [])
 
   function toggleFullscreen() {
     const stage = stageRef.current
     if (!stage) return
-    if (document.fullscreenElement) {
-      void document.exitFullscreen()
+    if (isFullscreenFor(stage)) {
+      void exitFullscreen(stage)
       return
     }
-    void stage.requestFullscreen().catch(() => {})
+    // iOS webkitEnterFullscreen 前常需处于播放态
+    if (pausedRef.current) {
+      pausedRef.current = false
+      setPaused(false)
+    }
+    void requestFullscreen(stage).catch(() => {})
   }
 
   function closePlayer() {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().finally(onClose)
+    const stage = stageRef.current
+    if (isFullscreenFor(stage)) {
+      void exitFullscreen(stage).finally(onClose)
       return
     }
     onClose()
@@ -220,31 +341,75 @@ export function MoviePlayer({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (document.fullscreenElement) return
-        onClose()
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return
       }
-      if (event.key === " " || event.key === "k") {
+      if (event.key === "Escape") {
+        if (isFullscreenFor(stageRef.current)) return
+        onClose()
+        return
+      }
+      if (event.key === " " || event.code === "Space" || event.key === "k" || event.key === "K") {
         event.preventDefault()
         setPaused((value) => !value)
+        return
       }
-      if (event.key === "m") setMuted((value) => !value)
-      if (event.key === "f") {
+      if (event.key === "m" || event.key === "M") {
+        setMuted((value) => {
+          const next = !value
+          mutedRef.current = next
+          if (!next && volumeRef.current <= 0) {
+            setVolume(VOLUME_STEP)
+            volumeRef.current = VOLUME_STEP
+          }
+          showVolumeHint(next ? 0 : volumeRef.current)
+          return next
+        })
+        return
+      }
+      if (event.key === "f" || event.key === "F") {
         event.preventDefault()
         toggleFullscreen()
+        return
       }
-      if (event.key === "ArrowLeft" || event.key === "j") {
+      if (event.key === "ArrowLeft" || event.key === "j" || event.key === "J") {
         event.preventDefault()
         seekBySeconds(-10)
+        return
       }
-      if (event.key === "ArrowRight" || event.key === "l") {
+      if (event.key === "ArrowRight" || event.key === "l" || event.key === "L") {
         event.preventDefault()
         seekBySeconds(10)
+        return
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        adjustVolume(VOLUME_STEP)
+        return
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        adjustVolume(-VOLUME_STEP)
+        return
+      }
+      if (event.key === "<" || event.key === ",") {
+        event.preventDefault()
+        const index = SPEED_STEPS.findIndex((step) => Math.abs(step - rateRef.current) < 0.001)
+        const prev = SPEED_STEPS[Math.max(0, (index < 0 ? 1 : index) - 1)] ?? 1
+        applySpeed(prev)
+        return
+      }
+      if (event.key === ">" || event.key === ".") {
+        event.preventDefault()
+        cycleSpeed()
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [onClose])
+
+  const effectiveVolume = muted ? 0 : volume
 
   return (
     <div ref={stageRef} className="absolute inset-0 z-[55] flex flex-col bg-black">
@@ -268,6 +433,8 @@ export function MoviePlayer({
             active
             preload
             muted={muted}
+            volume={volume}
+            playbackRate={playbackRate}
             paused={paused}
             epoch={epoch}
             startAt={30}
@@ -340,6 +507,33 @@ export function MoviePlayer({
                 {seekHint.delta < 0
                   ? t("movie.seekHintBack", { n: Math.abs(seekHint.delta) })
                   : t("movie.seekHintForward", { n: Math.abs(seekHint.delta) })}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {volumeHint && !failed && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-3 pt-[max(96px,calc(env(safe-area-inset-top)+84px))]">
+            <div
+              key={volumeHint.key}
+              className="movie-seek-hint flex items-center gap-2 rounded-full bg-black/55 px-4 py-2 text-white ring-1 ring-white/20 backdrop-blur-md"
+            >
+              <IconVolume muted={volumeHint.percent <= 0} className="h-5 w-5" />
+              <span className="text-[13px] font-semibold tracking-wide">
+                {t("movie.volumeHint", { n: volumeHint.percent })}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {speedHint && !failed && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center px-3 pt-[max(96px,calc(env(safe-area-inset-top)+84px))]">
+            <div
+              key={speedHint.key}
+              className="movie-seek-hint flex items-center gap-2 rounded-full bg-black/55 px-4 py-2 text-white ring-1 ring-white/20 backdrop-blur-md"
+            >
+              <span className="text-[13px] font-semibold tracking-wide">
+                {t("movie.speedValue", { n: formatSpeed(speedHint.rate) })}
               </span>
             </div>
           </div>
@@ -425,12 +619,12 @@ export function MoviePlayer({
               onKeyDown={(event) => {
                 event.stopPropagation()
                 const step = event.shiftKey ? 0.05 : 0.02
-                if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+                if (event.key === "ArrowRight") {
                   event.preventDefault()
                   seekToRatio((scrub ?? progress) + step)
                   setScrub(null)
                   scheduleChromeHide()
-                } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+                } else if (event.key === "ArrowLeft") {
                   event.preventDefault()
                   seekToRatio((scrub ?? progress) - step)
                   setScrub(null)
@@ -471,18 +665,38 @@ export function MoviePlayer({
             </div>
 
             <div className="mt-1.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-0.5">
-              <div className="justify-self-start">
+              <div className="flex items-center gap-1.5 justify-self-start">
                 <button
                   type="button"
                   className="grid h-11 w-11 place-items-center rounded-full bg-black/45 text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
-                  aria-label={muted ? t("nav.unmute") : t("nav.mute")}
+                  aria-label={muted || effectiveVolume <= 0 ? t("nav.unmute") : t("nav.mute")}
                   onClick={(event) => {
                     event.stopPropagation()
                     scheduleChromeHide()
-                    setMuted((value) => !value)
+                    setMuted((value) => {
+                      const next = !value
+                      mutedRef.current = next
+                      if (!next && volumeRef.current <= 0) {
+                        setVolume(VOLUME_STEP)
+                        volumeRef.current = VOLUME_STEP
+                      }
+                      showVolumeHint(next ? 0 : volumeRef.current)
+                      return next
+                    })
                   }}
                 >
-                  <IconVolume muted={muted} className="h-5 w-5" />
+                  <IconVolume muted={muted || effectiveVolume <= 0} className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  className="h-11 min-w-[44px] rounded-full bg-black/45 px-2.5 text-[12px] font-semibold tracking-wide text-white shadow-[0_6px_18px_rgba(0,0,0,0.3)] ring-1 ring-white/20 backdrop-blur-md transition active:scale-95"
+                  aria-label={t("movie.speed")}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    cycleSpeed()
+                  }}
+                >
+                  {t("movie.speedValue", { n: formatSpeed(playbackRate) })}
                 </button>
               </div>
 

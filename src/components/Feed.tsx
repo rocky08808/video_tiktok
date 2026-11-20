@@ -14,6 +14,12 @@ import type { MovieItem, MoviesPageResponse } from "@/lib/movies"
 import type { VideoFeedResponse, VideoItem } from "@/lib/types"
 import { applyClientSettings, fetchClientSettings, readClientSettings } from "@/lib/client-settings"
 import { formatCount } from "@/lib/format"
+import {
+  exitFullscreen,
+  isFullscreenFor,
+  requestFullscreen,
+  subscribeFullscreenChange,
+} from "@/lib/fullscreen"
 import { detectLocale, translate } from "@/lib/i18n"
 import { readFreePicPack, writeFreePicPack } from "@/lib/pic-pack"
 import { DEFAULT_APP_SETTINGS } from "@/lib/settings-types"
@@ -329,6 +335,7 @@ export function Feed() {
   const profileRef = useRef(false)
   const vipRef = useRef(false)
   const movieSavedRef = useRef(false)
+  const playingMovieRef = useRef(false)
   const picsRef = useRef(false)
   const vipUserRef = useRef(false)
   const listRef = useRef<VideoItem[]>([])
@@ -352,6 +359,7 @@ export function Feed() {
   vipRef.current = vipOpen
   picsRef.current = picsOpen
   movieSavedRef.current = movieSavedOpen
+  playingMovieRef.current = Boolean(playingMovie)
   vipUserRef.current = user?.vip === true
   tabRef.current = tab
 
@@ -1046,8 +1054,8 @@ export function Feed() {
       }
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === "INPUT" || tag === "TEXTAREA") return
-      // 美图 / 电影收藏打开时由弹层处理，其它快捷键先让出
-      if (picsRef.current || movieSavedRef.current) return
+      // 美图 / 电影收藏 / 电影播放打开时由弹层处理，其它快捷键先让出
+      if (picsRef.current || movieSavedRef.current || playingMovieRef.current) return
       if (profileRef.current) return
       const root = scrollerRef.current
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -1623,19 +1631,19 @@ function activeVideo() {
   }
 
   useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement === stageRef.current)
-    document.addEventListener("fullscreenchange", onChange)
-    return () => document.removeEventListener("fullscreenchange", onChange)
+    const onChange = () => setFullscreen(isFullscreenFor(stageRef.current))
+    onChange()
+    return subscribeFullscreenChange(stageRef.current, onChange)
   }, [])
 
   function toggleFullscreen() {
     const stage = stageRef.current
     if (!stage) return
-    if (document.fullscreenElement) {
-      void document.exitFullscreen()
+    if (isFullscreenFor(stage)) {
+      void exitFullscreen(stage)
       return
     }
-    void stage.requestFullscreen().catch(() => {})
+    void requestFullscreen(stage).catch(() => {})
   }
 
   function toggleMute() {
