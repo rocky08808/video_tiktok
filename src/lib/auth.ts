@@ -17,7 +17,7 @@ import {
   syncReactionIds,
   type ReactionKind,
 } from "@/lib/reactions"
-import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
+import { listUsdtTransfersToVip, sameUsdtAmount, type Trc20Transfer } from "@/lib/tron"
 import { getAppSettings } from "@/lib/app-settings"
 import {
   isVipUntilActive,
@@ -27,6 +27,7 @@ import {
   VIP_DURATION_MS,
   VIP_NETWORK,
   VIP_ORDER_TTL_MS,
+  VIP_PAYMENT_LOOKBACK_MS,
   vipUsdtAddress,
 } from "@/lib/vip"
 
@@ -341,10 +342,152 @@ function isDuplicateKey(error: unknown) {
   return /E11000|duplicate key/i.test(message)
 }
 
-/** 过期 pending 仍占着 amount 唯一索引；先标成 expired 再分配 */
+type VipOrderDoc = {
+  _id: ObjectId
+  username?: string
+  amount?: number
+  createdAt?: Date
+  status?: string
+}
+
+let lastVipSettleAt = 0
+const VIP_SETTLE_THROTTLE_MS = 45_000
+
+function orderCreatedMs(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.getTime()
+  return Date.now()
+}
+
+async function loadPaidTxOwners(txIds: string[]) {
+  if (txIds.length === 0) return new Map<string, string>()
+  const orders = await getVipOrdersCollection()
+  const used = await orders
+    .find({ txId: { $in: txIds }, status: "paid" }, { projection: { txId: 1, username: 1 } })
+    .toArray()
+  return new Map(
+    used
+      .filter((item) => typeof item.txId === "string")
+      .map((item) => [item.txId as string, typeof item.username === "string" ? item.username : ""]),
+  )
+}
+
+function matchTransferForOrder(
+  order: VipOrderDoc,
+  address: string,
+  transfers: Trc20Transfer[],
+  usedBy: Map<string, string>,
+) {
+  if (typeof order.username !== "string" || !order.username) return null
+  if (typeof order.amount !== "number" || !Number.isFinite(order.amount)) return null
+  const minAt = orderCreatedMs(order.createdAt) - VIP_PAYMENT_LOOKBACK_MS
+  const candidates = transfers.filter(
+    (item) => item.to === address && sameUsdtAmount(item.amount, order.amount) && item.at >= minAt,
+  )
+  return (
+    candidates.find((item) => {
+      const owner = usedBy.get(item.txId)
+      return !owner || owner === order.username
+    }) ?? null
+  )
+}
+
+async function markOrderPaidFromTransfer(order: VipOrderDoc, matched: Trc20Transfer, paySource: string) {
+  if (typeof order.username !== "string" || typeof order.amount !== "number") return false
+  const orders = await getVipOrdersCollection()
+  const updated = await orders.findOneAndUpdate(
+    { _id: order._id, status: "pending" },
+    {
+      $set: {
+        status: "paid",
+        txId: matched.txId,
+        from: matched.from,
+        paidAt: new Date(),
+        paySource,
+      },
+    },
+    { returnDocument: "after" },
+  )
+  if (!updated) {
+    const again = await orders.findOne({ _id: order._id, status: "paid" })
+    if (again) {
+      await openVip(order.username)
+      return true
+    }
+    return false
+  }
+  await openVip(order.username)
+  return true
+}
+
+/**
+ * 扫链认款 pending：付了但没点确认的单尽早绑 txId，避免过期回收金额后被别人误认。
+ * 默认 45s 节流；force 用于 cron / 过期结算。
+ */
+export async function settlePendingVipOrdersFromChain(options?: {
+  force?: boolean
+  /** 只处理这些订单；默认全部 pending */
+  onlyIds?: ObjectId[]
+  limit?: number
+}) {
+  const force = Boolean(options?.force)
+  const now = Date.now()
+  if (!force && now - lastVipSettleAt < VIP_SETTLE_THROTTLE_MS) {
+    return { skipped: true as const, settled: 0, checked: 0 }
+  }
+  lastVipSettleAt = now
+
+  const address = vipUsdtAddress()
+  if (!address) return { skipped: false as const, settled: 0, checked: 0, error: "no_address" as const }
+
+  const orders = await getVipOrdersCollection()
+  const filter =
+    options?.onlyIds && options.onlyIds.length > 0
+      ? { _id: { $in: options.onlyIds }, status: "pending" as const }
+      : { status: "pending" as const }
+  const pending = (await orders
+    .find(filter)
+    .sort({ createdAt: 1 })
+    .limit(Math.max(1, Math.min(200, options?.limit ?? 80)))
+    .toArray()) as VipOrderDoc[]
+  if (pending.length === 0) return { skipped: false as const, settled: 0, checked: 0 }
+
+  let transfers: Trc20Transfer[]
+  try {
+    transfers = await listUsdtTransfersToVip(80)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ""
+    return { skipped: false as const, settled: 0, checked: pending.length, error: "chain_failed" as const, detail: message }
+  }
+
+  const usedBy = await loadPaidTxOwners(transfers.map((item) => item.txId))
+  let settled = 0
+  for (const order of pending) {
+    const matched = matchTransferForOrder(order, address, transfers, usedBy)
+    if (!matched) continue
+    const ok = await markOrderPaidFromTransfer(order, matched, "chain_settle")
+    if (ok) {
+      settled += 1
+      usedBy.set(matched.txId, order.username || "")
+    }
+  }
+  return { skipped: false as const, settled, checked: pending.length }
+}
+
+/** 过期前先尝试认款，再把仍未支付的 pending 标 expired，释放金额档位 */
 async function expireStaleVipOrders() {
   const orders = await getVipOrdersCollection()
   const cutoff = new Date(Date.now() - VIP_ORDER_TTL_MS)
+  const stale = await orders
+    .find({ status: "pending", createdAt: { $lte: cutoff } }, { projection: { _id: 1 } })
+    .limit(100)
+    .toArray()
+  if (stale.length > 0) {
+    await settlePendingVipOrdersFromChain({
+      force: true,
+      onlyIds: stale.map((item) => item._id as ObjectId),
+      limit: stale.length,
+    })
+  }
   await orders.updateMany(
     { status: "pending", createdAt: { $lte: cutoff } },
     { $set: { status: "expired", expiredAt: new Date() } },
@@ -382,6 +525,8 @@ export async function ensurePendingVipOrder(username: string) {
   )
 
   await expireStaleVipOrders()
+  // 顺带扫一下 pending（有节流），付了没点确认的会自动开通
+  await settlePendingVipOrdersFromChain().catch(() => null)
 
   const existing = await orders.findOne({
     username,
@@ -446,18 +591,16 @@ export async function confirmVipPayment(username: string) {
   if (!address) return { ok: false as const, code: "no_address" as const }
 
   const orders = await getVipOrdersCollection()
-  const order = await orders.findOne({
+  const order = (await orders.findOne({
     username,
     status: "pending",
     createdAt: { $gt: new Date(Date.now() - VIP_ORDER_TTL_MS) },
-  })
+  })) as VipOrderDoc | null
   if (!order || typeof order.amount !== "number") {
     return { ok: false as const, code: "no_order" as const }
   }
 
-  const createdAt = order.createdAt instanceof Date ? order.createdAt.getTime() : Date.now()
-  const minAt = createdAt - 3 * 60 * 1000
-  let transfers
+  let transfers: Trc20Transfer[]
   try {
     transfers = await listUsdtTransfersToVip(50)
   } catch (error) {
@@ -465,24 +608,8 @@ export async function confirmVipPayment(username: string) {
     return { ok: false as const, code: "chain_failed" as const, detail: message || undefined }
   }
 
-  const candidates = transfers.filter(
-    (item) => item.to === address && sameUsdtAmount(item.amount, order.amount) && item.at >= minAt,
-  )
-  const used = await orders
-    .find(
-      { txId: { $in: candidates.map((item) => item.txId) }, status: "paid" },
-      { projection: { txId: 1, username: 1 } },
-    )
-    .toArray()
-  const usedBy = new Map(
-    used
-      .filter((item) => typeof item.txId === "string")
-      .map((item) => [item.txId as string, typeof item.username === "string" ? item.username : ""]),
-  )
-  const matched = candidates.find((item) => {
-    const owner = usedBy.get(item.txId)
-    return !owner || owner === username
-  })
+  const usedBy = await loadPaidTxOwners(transfers.map((item) => item.txId))
+  const matched = matchTransferForOrder(order, address, transfers, usedBy)
   if (!matched) {
     return {
       ok: false as const,
@@ -491,28 +618,8 @@ export async function confirmVipPayment(username: string) {
     }
   }
 
-  const updated = await orders.findOneAndUpdate(
-    { _id: order._id, status: "pending" },
-    {
-      $set: {
-        status: "paid",
-        txId: matched.txId,
-        from: matched.from,
-        paidAt: new Date(),
-      },
-    },
-    { returnDocument: "after" },
-  )
-  if (!updated) {
-    const again = await orders.findOne({ username, status: "paid", txId: matched.txId })
-    if (again) {
-      await openVip(username)
-      return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId }
-    }
-    return { ok: false as const, code: "order_expired" as const }
-  }
-
-  await openVip(username)
+  const ok = await markOrderPaidFromTransfer(order, matched, "user_confirm")
+  if (!ok) return { ok: false as const, code: "order_expired" as const }
   return { ok: true as const, vip: true, amount: order.amount, txId: matched.txId, orderId: String(order._id) }
 }
 

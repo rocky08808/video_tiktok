@@ -6,7 +6,7 @@ import { isVipUntilActive, readVipUntil } from "@/lib/vip"
 import { getSessionsCollection, getUsersCollection, getVipOrdersCollection } from "@/lib/mongo"
 import { countReactionsForUsers } from "@/lib/reactions"
 import { listUsdtTransfersToVip, sameUsdtAmount } from "@/lib/tron"
-import { formatVipAmount, VIP_ORDER_TTL_MS, vipUsdtAddress } from "@/lib/vip"
+import { formatVipAmount, VIP_ORDER_TTL_MS, VIP_PAYMENT_LOOKBACK_MS, vipUsdtAddress } from "@/lib/vip"
 
 const COOKIE = "sk_admin"
 const MAX_AGE = 60 * 60 * 12
@@ -436,7 +436,7 @@ export async function checkVipOrderPayment(orderId: string) {
   if (typeof order.amount !== "number" || !Number.isFinite(order.amount)) throw new Error("订单金额无效")
 
   const created = orderCreatedAt(order.createdAt)
-  const minAt = (created?.getTime() ?? Date.now()) - 3 * 60 * 1000
+  const minAt = (created?.getTime() ?? Date.now()) - VIP_PAYMENT_LOOKBACK_MS
   let transfers
   try {
     transfers = await listUsdtTransfersToVip(80)
