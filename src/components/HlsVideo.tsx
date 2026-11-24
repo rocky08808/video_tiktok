@@ -76,6 +76,7 @@ export function HlsVideo({
   const skippedRef = useRef(false)
   const playGenRef = useRef(0)
   const playRetryRef = useRef<number | null>(null)
+  const stallRetryRef = useRef<number | null>(null)
   const rateWatchRef = useRef<number | null>(null)
   const [posterKey, setPosterKey] = useState(`${src}:${epoch}`)
   const [showPoster, setShowPoster] = useState(Boolean(poster))
@@ -188,6 +189,33 @@ export function HlsVideo({
     }
   }
 
+  function clearStallRetry() {
+    if (stallRetryRef.current != null) {
+      window.clearTimeout(stallRetryRef.current)
+      stallRetryRef.current = null
+    }
+  }
+
+  function scheduleStallRecovery() {
+    const video = videoRef.current
+    if (!video || !activeRef.current || pausedRef.current) return
+    clearStallRetry()
+    stallRetryRef.current = window.setTimeout(() => {
+      stallRetryRef.current = null
+      if (!activeRef.current || pausedRef.current) return
+      if (!video.paused && video.readyState >= 3) {
+        markPlaying()
+        return
+      }
+      try {
+        playerRef.current?.startLoad()
+      } catch {
+        // ignore
+      }
+      requestPlay("stall")
+    }, 900)
+  }
+
   function applyStartAt() {
     const video = videoRef.current
     if (!video || skippedRef.current) return
@@ -211,6 +239,7 @@ export function HlsVideo({
   }
 
   function markPlaying() {
+    clearStallRetry()
     setShowPoster(false)
     onBufferingRef.current(false)
     applyPlaybackRate()
@@ -349,6 +378,7 @@ export function HlsVideo({
       destroyed = true
       playGenRef.current += 1
       clearPlayRetry()
+      clearStallRetry()
       playerRef.current?.destroy()
       playerRef.current = null
       video.pause()
@@ -415,6 +445,7 @@ export function HlsVideo({
     return () => {
       playGenRef.current += 1
       clearPlayRetry()
+      clearStallRetry()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, paused, preload])
@@ -470,7 +501,16 @@ export function HlsVideo({
           if (activeRef.current && !pausedRef.current) requestPlay("canplay")
         }}
         onWaiting={() => {
-          if (activeRef.current && !pausedRef.current) onBufferingRef.current(true)
+          if (activeRef.current && !pausedRef.current) {
+            onBufferingRef.current(true)
+            scheduleStallRecovery()
+          }
+        }}
+        onStalled={() => {
+          if (activeRef.current && !pausedRef.current) {
+            onBufferingRef.current(true)
+            scheduleStallRecovery()
+          }
         }}
         onTimeUpdate={(event) => {
           const video = event.currentTarget
