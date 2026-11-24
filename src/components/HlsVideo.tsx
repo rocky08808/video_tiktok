@@ -278,8 +278,10 @@ export function HlsVideo({
           if (gen !== playGenRef.current) return
           if (!activeRef.current || pausedRef.current) return
           onBufferingRef.current(true)
-          if (n >= 5) return
-          playRetryRef.current = window.setTimeout(() => attempt(n + 1), 160 * (n + 1))
+          playRetryRef.current = window.setTimeout(
+            () => attempt(n + 1),
+            Math.min(1000, 160 * (n + 1)),
+          )
         })
     }
 
@@ -307,6 +309,15 @@ export function HlsVideo({
           return
         }
         onErrorRef.current(t("hls.noHls"))
+        return
+      }
+
+      if (
+        typeof MediaSource !== "undefined" &&
+        typeof MediaSource.isTypeSupported === "function" &&
+        !MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"')
+      ) {
+        onErrorRef.current(t("hls.loadFailed"))
         return
       }
 
@@ -442,10 +453,27 @@ export function HlsVideo({
     }
     if (poster) setShowPoster(true)
     requestPlay("active")
+    const playbackWatch = window.setInterval(() => {
+      const video = videoRef.current
+      if (!video || !activeRef.current || pausedRef.current) return
+      if (video.paused || video.readyState < 3) {
+        requestPlay("watch")
+      }
+    }, 1000)
+    const retryOnVisibility = () => {
+      if (document.visibilityState === "visible" && activeRef.current && !pausedRef.current) {
+        requestPlay("visible")
+      }
+    }
+    document.addEventListener("visibilitychange", retryOnVisibility)
+    window.addEventListener("focus", retryOnVisibility)
     return () => {
       playGenRef.current += 1
       clearPlayRetry()
       clearStallRetry()
+      window.clearInterval(playbackWatch)
+      document.removeEventListener("visibilitychange", retryOnVisibility)
+      window.removeEventListener("focus", retryOnVisibility)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, paused, preload])
@@ -469,6 +497,7 @@ export function HlsVideo({
         }}
         className="media-fit absolute top-1/2 left-0 w-full -translate-y-1/2"
         playsInline
+        autoPlay={active && !paused && preload}
         loop={loopOne}
         muted={muted}
         poster={poster}
